@@ -57,8 +57,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          EXE="src-tauri/target/release/l2-launcher.exe"
-          if [ ! -f "$EXE" ]; then EXE=$(ls -1 src-tauri/target/release/*.exe | head -1); fi
+          # Cargo workspace → бинарь в корневом target/release. Ищем в обоих местах.
+          EXE=""
+          for c in target/release/l2-launcher.exe src-tauri/target/release/l2-launcher.exe; do
+            if [ -f "$c" ]; then EXE="$c"; break; fi
+          done
+          if [ -z "$EXE" ]; then EXE=$(find . -path ./node_modules -prune -o -name 'l2-launcher.exe' -print | head -1); fi
           echo "portable exe: $EXE"
           cp "$EXE" "L2-Interlude-portable.exe"
           gh release upload "${{ github.ref_name }}" "L2-Interlude-portable.exe" \
