@@ -57,6 +57,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp "src-tauri/target/release/L2 Interlude.exe" "L2-Interlude-portable.exe"
+          EXE="src-tauri/target/release/l2-launcher.exe"
+          if [ ! -f "$EXE" ]; then EXE=$(ls -1 src-tauri/target/release/*.exe | head -1); fi
+          echo "portable exe: $EXE"
+          cp "$EXE" "L2-Interlude-portable.exe"
           gh release upload "${{ github.ref_name }}" "L2-Interlude-portable.exe" \
             --repo "${{ github.repository }}" --clobber
