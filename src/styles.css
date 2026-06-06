@@ -1,0 +1,102 @@
+@import "tailwindcss";
+
+/* Дизайн-система лаунчера — единый язык с сайтом: Dark Fantasy Minimal, золото. */
+@theme {
+  --color-bg: #0a0a0b;
+  --color-fg: #e9e4d8;
+  --color-gold: #c9a45c;
+  --color-gold-soft: #e0c486;
+  --color-gold-dim: #8a7440;
+  --font-heading: "Forum", Georgia, serif;
+  --font-display: "Cinzel", Georgia, serif;
+}
+
+@font-face {
+  font-family: "Cinzel";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: local("Cinzel");
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-heading);
+  letter-spacing: 0.01em;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+::selection {
+  background: rgba(201, 164, 92, 0.25);
+}
+
+/* Стеклянные панели */
+.glass {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.012));
+  border: 1px solid rgba(201, 164, 92, 0.18);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 24px 60px -32px rgba(0, 0, 0, 0.9);
+}
+
+.text-gold-gradient {
+  background: linear-gradient(180deg, #f3e2b6 0%, #c9a45c 55%, #8a7440 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.rule-gold {
+  height: 1px;
+  border: 0;
+  background: linear-gradient(90deg, transparent, rgba(201, 164, 92, 0.5), transparent);
+}
+
+/* Прокачиваемый прогресс-бар */
+.progress-track {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(201, 164, 92, 0.18);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress-fill {
+  background: linear-gradient(90deg, #8a7440, #c9a45c, #e0c486);
+  box-shadow: 0 0 16px -2px rgba(201, 164, 92, 0.6);
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+/* Область, за которую тащим окно */
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+@keyframes pulse-gold {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.pulse {
+  animation: pulse-gold 2s ease-in-out infinite;
+}

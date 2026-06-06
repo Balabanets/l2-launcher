@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "L2 Interlude",
+  "version": "0.1.0",
+  "identifier": "uk.balabanets.l2launcher",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "L2 Interlude",
+        "width": 1000,
+        "height": 640,
+        "minWidth": 1000,
+        "minHeight": 640,
+        "resizable": false,
+        "maximizable": false,
+        "decorations": false,
+        "center": true,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Balabanets/l2-launcher/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU2Njg3OTIzRTNENDdGNTIKUldSU2Y5VGpJM2xvNW5HUkFDdE14NHBpYXJaVVFOejNjQlFEUGNGc3lxYmFQV1pZQkxpRStOQ0QK"
+    }
+  }
+}

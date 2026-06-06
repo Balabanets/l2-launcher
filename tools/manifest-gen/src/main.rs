@@ -1,0 +1,175 @@
+//! Генератор подписанного манифеста клиента L2.
+//!
+//! Проходит по папке клиента, считает размеры и SHA-256 (параллельно),
+//! формирует manifest.json и подписывает его Ed25519 → manifest.json.sig.
+//!
+//! Использование:
+//!   manifest-gen \
+//!     --client  /home/creative/l2-client-master \
+//!     --out     ./dist \
+//!     --base-url https://cdn.l2.balabanets.uk/client/ \
+//!     --version 2026.06.06 \
+//!     --key     ./keys/manifest_ed25519.key   (32 байта приватного ключа, hex или base64)
+//!
+//! Критичные паттерны и команда запуска заданы значениями по умолчанию для Interlude,
+//! переопределяются флагами --critical и --exe.
+
+use anyhow::{anyhow, bail, Context, Result};
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use l2_manifest::{sign, FileEntry, LaunchSpec, Manifest, MANIFEST_FILE, SIGNATURE_FILE};
+use rayon::prelude::*;
+use std::path::{Path, PathBuf};
+
+struct Args {
+    client: PathBuf,
+    out: PathBuf,
+    base_url: String,
+    version: String,
+    key: PathBuf,
+    critical: Vec<String>,
+    exe: String,
+    cwd: Option<String>,
+}
+
+fn parse_args() -> Result<Args> {
+    let mut client = None;
+    let mut out = PathBuf::from("./dist");
+    let mut base_url = None;
+    let mut version = None;
+    let mut key = None;
+    let mut critical: Vec<String> = vec![];
+    let mut exe = "system/l2.exe".to_string();
+    let mut cwd = Some("system".to_string());
+
+    let mut it = std::env::args().skip(1);
+    while let Some(a) = it.next() {
+        let mut val = || it.next().ok_or_else(|| anyhow!("ожидалось значение после {a}"));
+        match a.as_str() {
+            "--client" => client = Some(PathBuf::from(val()?)),
+            "--out" => out = PathBuf::from(val()?),
+            "--base-url" => base_url = Some(val()?),
+            "--version" => version = Some(val()?),
+            "--key" => key = Some(PathBuf::from(val()?)),
+            "--critical" => critical.push(val()?),
+            "--exe" => exe = val()?,
+            "--cwd" => cwd = Some(val()?),
+            "-h" | "--help" => {
+                println!("{}", include_str!("../README_USAGE.txt"));
+                std::process::exit(0);
+            }
+            other => bail!("неизвестный аргумент: {other}"),
+        }
+    }
+
+    if critical.is_empty() {
+        // Разумные значения по умолчанию для Interlude.
+        critical = vec![
+            "system/l2.exe".into(),
+            "system/*.dll".into(),
+            "system/*.exe".into(),
+            "system/*.int".into(),
+            "system/*.dat".into(),
+        ];
+    }
+
+    Ok(Args {
+        client: client.context("обязателен --client")?,
+        out,
+        base_url: base_url.context("обязателен --base-url")?,
+        version: version.context("обязателен --version")?,
+        key: key.context("обязателен --key")?,
+        critical,
+        exe,
+        cwd,
+    })
+}
+
+/// Загрузить 32 байта приватного ключа из файла (hex или base64).
+fn load_key(path: &Path) -> Result<[u8; 32]> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("не читается ключ {}", path.display()))?;
+    let raw = raw.trim();
+    let bytes = if let Ok(b) = hex::decode(raw) {
+        b
+    } else {
+        B64.decode(raw).context("ключ не hex и не base64")?
+    };
+    let arr: [u8; 32] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow!("ключ должен быть ровно 32 байта, получено {}", bytes.len()))?;
+    Ok(arr)
+}
+
+fn main() -> Result<()> {
+    let args = parse_args()?;
+    let root = args.client.canonicalize().context("папка клиента не найдена")?;
+    if !root.is_dir() {
+        bail!("--client должен быть директорией");
+    }
+    let key = load_key(&args.key)?;
+
+    // 1. Собираем список файлов (исключая служебные манифесты).
+    let mut paths: Vec<PathBuf> = vec![];
+    for entry in walkdir::WalkDir::new(&root).follow_links(false) {
+        let entry = entry?;
+        if entry.file_type().is_file() {
+            let name = entry.file_name().to_string_lossy();
+            if name == MANIFEST_FILE || name == SIGNATURE_FILE {
+                continue;
+            }
+            paths.push(entry.path().to_path_buf());
+        }
+    }
+    eprintln!("Файлов к обработке: {}", paths.len());
+
+    // 2. Параллельно считаем размер + SHA-256.
+    let files: Vec<FileEntry> = paths
+        .par_iter()
+        .map(|p| -> Result<FileEntry> {
+            let rel = p
+                .strip_prefix(&root)?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let size = std::fs::metadata(p)?.len();
+            let sha256 = l2_manifest::hash_file(p)?;
+            Ok(FileEntry { path: rel, size, sha256 })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut files = files;
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let total: u64 = files.iter().map(|f| f.size).sum();
+    eprintln!("Суммарный размер: {:.2} ГБ", total as f64 / 1e9);
+
+    // 3. Собираем и подписываем манифест.
+    let base_url = if args.base_url.ends_with('/') {
+        args.base_url.clone()
+    } else {
+        format!("{}/", args.base_url)
+    };
+    let manifest = Manifest {
+        version: args.version,
+        base_url,
+        files,
+        critical: args.critical,
+        launch: LaunchSpec { exe: args.exe, args: vec![], cwd: args.cwd },
+    };
+
+    let bytes = manifest.canonical_bytes()?;
+    let sig = sign(&key, &bytes);
+
+    // 4. Пишем dist/manifest.json + .sig
+    std::fs::create_dir_all(&args.out)?;
+    std::fs::write(args.out.join(MANIFEST_FILE), &bytes)?;
+    std::fs::write(args.out.join(SIGNATURE_FILE), sig.as_bytes())?;
+
+    eprintln!(
+        "Готово: {} ({} файлов), подпись {}",
+        args.out.join(MANIFEST_FILE).display(),
+        manifest.files.len(),
+        args.out.join(SIGNATURE_FILE).display()
+    );
+    Ok(())
+}

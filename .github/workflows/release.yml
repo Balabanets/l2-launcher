@@ -1,0 +1,51 @@
+name: Release (Windows)
+
+# Сборка и публикация Windows-инсталлятора + артефактов автообновления.
+# Триггерится тегом вида v1.2.3.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build & release (Tauri)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Приватный ключ апдейтера и его пароль — в секретах репозитория.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "L2 Interlude Launcher ${{ github.ref_name }}"
+          releaseBody: "Автообновляемый лаунчер. Скачайте установщик .exe ниже."
+          releaseDraft: false
+          prerelease: false
+          # latest.json для встроенного апдейтера Tauri публикуется автоматически.
+          includeUpdaterJson: true
