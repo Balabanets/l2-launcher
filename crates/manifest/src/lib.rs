@@ -32,13 +32,22 @@ pub struct LaunchSpec {
     pub cwd: Option<String>,
 }
 
+fn default_layout() -> String {
+    "path".to_string()
+}
+
 /// Полный манифест клиента.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
     /// Версия набора файлов, например "2026.06.06".
     pub version: String,
-    /// Базовый URL раздачи (R2), со слешем на конце.
+    /// Базовый URL раздачи, со слешем на конце.
     pub base_url: String,
+    /// Способ адресации файлов на раздаче:
+    ///  - "path": URL = base_url + относительный путь (R2/nginx)
+    ///  - "cas":  URL = base_url + sha256 (контентно-адресуемо, GitHub Releases)
+    #[serde(default = "default_layout")]
+    pub layout: String,
     pub files: Vec<FileEntry>,
     /// glob-паттерны критичных файлов — проверяются ВСЕГДА перед запуском.
     #[serde(default)]
@@ -74,6 +83,11 @@ impl Manifest {
     /// Список критичных файлов из манифеста.
     pub fn critical_files(&self) -> Vec<&FileEntry> {
         self.files.iter().filter(|f| self.is_critical(&f.path)).collect()
+    }
+
+    /// Контентно-адресуемая раздача (файлы по sha256).
+    pub fn is_cas(&self) -> bool {
+        self.layout == "cas"
     }
 }
 
@@ -138,6 +152,7 @@ mod tests {
         let m = Manifest {
             version: "t".into(),
             base_url: "https://x/".into(),
+            layout: "path".into(),
             files: vec![],
             critical: vec!["system/*.dll".into(), "system/l2.exe".into()],
             launch: LaunchSpec { exe: "system/l2.exe".into(), args: vec![], cwd: None },

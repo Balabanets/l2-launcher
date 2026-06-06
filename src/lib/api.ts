@@ -30,16 +30,19 @@ export interface ScanSummary {
   mismatched: number;
   bytes_to_download: number;
   checked: number;
+  cancelled: boolean;
 }
 
 export interface Progress {
-  downloaded: number;
+  phase: "download" | "verify";
+  processed: number;
   total: number;
   files_done: number;
   files_total: number;
   speed_bps: number;
   eta_secs: number;
   current: string;
+  paused: boolean;
   done: boolean;
 }
 
@@ -51,6 +54,9 @@ export const api = {
   repair: () => invoke<ScanSummary>("repair"),
   verifyFiles: () => invoke<ScanSummary>("verify_files"),
   play: () => invoke<PlayResult>("play"),
+  pause: () => invoke<void>("pause_tasks"),
+  resume: () => invoke<void>("resume_tasks"),
+  cancel: () => invoke<void>("cancel_tasks"),
 };
 
 export function onProgress(cb: (p: Progress) => void): Promise<UnlistenFn> {

@@ -18,6 +18,7 @@ dist-ssr
 # Эталонная копия клиента (~7 ГБ) — НЕ в git
 /master-client
 /dist-manifest
+/cas-stage
 
 # Секреты — НИКОГДА не коммитить
 *.key

@@ -3,7 +3,9 @@
 //!
 //! GUI не требуется — проверяется именно логика апдейтера.
 
+use l2_launcher_lib::control::Control;
 use l2_launcher_lib::l2_manifest::{hash_file, FileEntry, LaunchSpec, Manifest};
+use l2_launcher_lib::progress::ProgressCb;
 use l2_launcher_lib::{default_client, download, scan, verify};
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -113,6 +115,7 @@ async fn full_update_verify_tamper_repair() {
     let manifest = Manifest {
         version: "test".into(),
         base_url: base_url.clone(),
+        layout: "path".into(),
         files: vec![
             entry(&srv, "system/l2.exe"),
             entry(&srv, "system/core.dll"),
@@ -131,13 +134,16 @@ async fn full_update_verify_tamper_repair() {
     // 4. Скачиваем всё, считаем вызовы прогресса.
     let calls = Arc::new(AtomicUsize::new(0));
     let calls2 = calls.clone();
-    let cb: download::ProgressCb = Arc::new(move |_p| {
+    let cb: ProgressCb = Arc::new(move |_p| {
         calls2.fetch_add(1, Ordering::Relaxed);
     });
     let client = default_client();
-    download::download_all(&client, &install, &base_url, diff.to_fetch(), 4, cb)
-        .await
-        .expect("загрузка должна пройти");
+    download::download_all(
+        &client, &install, &base_url, diff.to_fetch(), 4, false,
+        Arc::new(Control::new()), cb,
+    )
+    .await
+    .expect("загрузка должна пройти");
     assert!(calls.load(Ordering::Relaxed) >= 1, "прогресс должен эмититься");
 
     // 5. После загрузки всё на месте и хеши совпадают.
@@ -162,12 +168,74 @@ async fn full_update_verify_tamper_repair() {
     assert!(diff.mismatched.iter().any(|f| f.path == "system/core.dll"));
 
     // 8. Починка: докачиваем расхождения → снова валидно.
-    let cb2: download::ProgressCb = Arc::new(|_p| {});
-    download::download_all(&client, &install, &base_url, diff.to_fetch(), 4, cb2)
-        .await
-        .expect("починка должна пройти");
+    let cb2: ProgressCb = Arc::new(|_p| {});
+    download::download_all(
+        &client, &install, &base_url, diff.to_fetch(), 4, false,
+        Arc::new(Control::new()), cb2,
+    )
+    .await
+    .expect("починка должна пройти");
     let report = verify::verify_critical(&install, &manifest);
     assert!(report.ok, "после починки целостность восстановлена");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cas_layout_downloads_by_hash() {
+    // Раздача контентно-адресуема: файлы лежат под именами = sha256 (как на GitHub Releases).
+    let srv = unique_tmp("srv_cas");
+    let files: Vec<(&str, &[u8])> = vec![
+        ("system/L2.exe", b"interlude client exe"),
+        ("system/Core.dll", b"core dll bytes here"),
+        ("textures/x.utx", b"texture payload data"),
+    ];
+    let mut entries = vec![];
+    for (path, bytes) in &files {
+        let h = l2_launcher_lib::l2_manifest::hash_bytes(bytes);
+        // файл на сервере назван своим sha256
+        std::fs::write(srv.join(&h), bytes).unwrap();
+        entries.push(FileEntry { path: path.to_string(), size: bytes.len() as u64, sha256: h });
+    }
+    let port = serve_dir(srv.clone());
+    let base_url = format!("http://127.0.0.1:{}/", port);
+
+    let install = unique_tmp("install_cas");
+    let client = default_client();
+    let cb: ProgressCb = Arc::new(|_p| {});
+    let outcome = download::download_all(
+        &client, &install, &base_url, entries.clone(), 4, /*cas*/ true,
+        Arc::new(Control::new()), cb,
+    )
+    .await
+    .expect("CAS-загрузка должна пройти");
+    assert_eq!(outcome, download::Outcome::Completed);
+
+    // файлы разложены по их логическим путям и совпадают по хешу
+    for (path, bytes) in &files {
+        let got = std::fs::read(install.join(path)).expect("файл должен существовать");
+        assert_eq!(&got, bytes, "{path}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_stops_download() {
+    let srv = unique_tmp("srv_cancel");
+    write_file(&srv, "system/a.dat", &vec![1u8; 100_000]);
+    let port = serve_dir(srv.clone());
+    let base_url = format!("http://127.0.0.1:{}/", port);
+    let entry = entry(&srv, "system/a.dat");
+
+    let install = unique_tmp("install_cancel");
+    let client = default_client();
+    let control = Arc::new(Control::new());
+    control.cancel(); // отменяем заранее → файл не должен скачаться
+    let cb: ProgressCb = Arc::new(|_p| {});
+    let outcome = download::download_all(
+        &client, &install, &base_url, vec![entry], 2, false, control, cb,
+    )
+    .await
+    .expect("отмена не должна быть ошибкой");
+    assert_eq!(outcome, download::Outcome::Cancelled);
+    assert!(!install.join("system/a.dat").exists(), "при отмене файл не появляется");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -186,8 +254,12 @@ async fn rejects_corrupt_download() {
     };
     let install = unique_tmp("install_bad");
     let client = default_client();
-    let cb: download::ProgressCb = Arc::new(|_p| {});
-    let res = download::download_all(&client, &install, &base_url, vec![wrong], 1, cb).await;
+    let cb: ProgressCb = Arc::new(|_p| {});
+    let res = download::download_all(
+        &client, &install, &base_url, vec![wrong], 1, false,
+        Arc::new(Control::new()), cb,
+    )
+    .await;
     assert!(res.is_err(), "файл с несовпадающим хешем не должен приниматься");
     // битый временный файл не должен оставлять валидный результат
     assert!(!install.join("system/core.dll").exists());

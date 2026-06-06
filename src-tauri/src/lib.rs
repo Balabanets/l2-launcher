@@ -1,9 +1,11 @@
 //! L2 Interlude Launcher — ядро Tauri-приложения.
 
 pub mod config;
+pub mod control;
 pub mod download;
 pub mod launch;
 pub mod manifest;
+pub mod progress;
 pub mod scan;
 pub mod session;
 pub mod verify;
@@ -12,8 +14,9 @@ pub mod verify;
 pub use l2_manifest;
 
 use config::LauncherConfig;
-use download::Progress;
-use l2_manifest::Manifest;
+use control::Control;
+use l2_manifest::{FileEntry, Manifest};
+use progress::{Progress, ProgressCb, PROGRESS_EVENT};
 use scan::ScanMode;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -21,27 +24,13 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
 
-/// HTTP-клиент лаунчера (используется и в командах, и в интеграционных тестах).
-pub fn default_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .user_agent(concat!("L2Launcher/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .expect("reqwest client")
-}
-
-/// Колбэк, который шлёт прогресс во фронтенд через событие Tauri.
-fn progress_cb(app: tauri::AppHandle) -> download::ProgressCb {
-    Arc::new(move |p: Progress| {
-        let _ = app.emit(download::PROGRESS_EVENT, p);
-    })
-}
-
 /// Глобальное состояние лаунчера.
 pub struct AppState {
     config: Mutex<LauncherConfig>,
     manifest: Mutex<Option<Manifest>>,
     client: reqwest::Client,
     config_path: PathBuf,
+    control: Arc<Control>,
 }
 
 #[derive(Serialize)]
@@ -57,7 +46,6 @@ pub struct CheckResult {
 #[derive(Serialize)]
 pub struct PlayResult {
     pub launched: bool,
-    /// Битые/отсутствующие критичные файлы (если launched=false).
     pub bad: Vec<String>,
 }
 
@@ -68,6 +56,21 @@ pub struct ScanSummary {
     pub mismatched: usize,
     pub bytes_to_download: u64,
     pub checked: usize,
+    pub cancelled: bool,
+}
+
+/// HTTP-клиент лаунчера (используется и в командах, и в интеграционных тестах).
+pub fn default_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent(concat!("L2Launcher/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .expect("reqwest client")
+}
+
+fn progress_cb(app: tauri::AppHandle) -> ProgressCb {
+    Arc::new(move |p: Progress| {
+        let _ = app.emit(PROGRESS_EVENT, p);
+    })
 }
 
 // ---- helpers ----
@@ -88,7 +91,22 @@ async fn cached_or_load(state: &AppState) -> Result<Manifest, String> {
     load_manifest(state).await
 }
 
-// ---- commands ----
+// ---- управление задачами ----
+
+#[tauri::command]
+fn pause_tasks(state: State<'_, AppState>) {
+    state.control.set_paused(true);
+}
+#[tauri::command]
+fn resume_tasks(state: State<'_, AppState>) {
+    state.control.set_paused(false);
+}
+#[tauri::command]
+fn cancel_tasks(state: State<'_, AppState>) {
+    state.control.cancel();
+}
+
+// ---- команды ----
 
 #[tauri::command]
 async fn get_config(state: State<'_, AppState>) -> Result<LauncherConfig, String> {
@@ -102,7 +120,7 @@ async fn save_config(state: State<'_, AppState>, config: LauncherConfig) -> Resu
     Ok(())
 }
 
-/// Проверить наличие обновлений (быстро: размер+наличие, без полного хеширования).
+/// Быстрая проверка обновлений (наличие+размер).
 #[tauri::command]
 async fn check_update(state: State<'_, AppState>) -> Result<CheckResult, String> {
     let manifest = load_manifest(&state).await?;
@@ -121,9 +139,10 @@ async fn check_update(state: State<'_, AppState>) -> Result<CheckResult, String>
     })
 }
 
-/// Скачать обновление (missing + изменённые по размеру). Прогресс — события `update:progress`.
+/// Скачать обновление (missing + изменённые по размеру). Прогресс — `update:progress`.
 #[tauri::command]
 async fn start_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state.control.reset();
     let manifest = cached_or_load(&state).await?;
     let cfg = state.config.lock().await.clone();
     let install = cfg.install_dir.clone();
@@ -141,37 +160,51 @@ async fn start_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Resu
         &manifest.base_url,
         to_fetch,
         cfg.concurrency,
+        manifest.is_cas(),
+        state.control.clone(),
         progress_cb(app),
     )
     .await
+    .map(|_| ())
     .map_err(|e| e.to_string())
 }
 
 /// Полная проверка целостности всех файлов (SHA-256) + докачка/починка.
 #[tauri::command]
 async fn repair(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<ScanSummary, String> {
+    state.control.reset();
     let manifest = cached_or_load(&state).await?;
     let cfg = state.config.lock().await.clone();
     let install = cfg.install_dir.clone();
+
     let m = manifest.clone();
-    let diff = tokio::task::spawn_blocking(move || scan::scan_all(&install, &m, ScanMode::Hash))
-        .await
-        .map_err(|e| e.to_string())?;
+    let control = state.control.clone();
+    let cb = progress_cb(app.clone());
+    let (diff, cancelled) = tokio::task::spawn_blocking(move || {
+        let refs: Vec<&FileEntry> = m.files.iter().collect();
+        scan::scan_with_progress(&install, &refs, ScanMode::Hash, control, cb)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
     let summary = ScanSummary {
         ok: diff.ok,
         missing: diff.missing.len(),
         mismatched: diff.mismatched.len(),
         bytes_to_download: diff.bytes_to_download,
         checked: diff.checked,
+        cancelled,
     };
     let to_fetch = diff.to_fetch();
-    if !to_fetch.is_empty() {
+    if !cancelled && !to_fetch.is_empty() {
         download::download_all(
             &state.client,
             &cfg.install_dir,
             &manifest.base_url,
             to_fetch,
             cfg.concurrency,
+            manifest.is_cas(),
+            state.control.clone(),
             progress_cb(app),
         )
         .await
@@ -180,21 +213,28 @@ async fn repair(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Sca
     Ok(summary)
 }
 
-/// Полная проверка целостности без скачивания (отчёт).
+/// Полная проверка целостности без скачивания.
 #[tauri::command]
-async fn verify_files(state: State<'_, AppState>) -> Result<ScanSummary, String> {
+async fn verify_files(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<ScanSummary, String> {
+    state.control.reset();
     let manifest = cached_or_load(&state).await?;
     let install = state.config.lock().await.install_dir.clone();
     let m = manifest.clone();
-    let diff = tokio::task::spawn_blocking(move || scan::scan_all(&install, &m, ScanMode::Hash))
-        .await
-        .map_err(|e| e.to_string())?;
+    let control = state.control.clone();
+    let cb = progress_cb(app);
+    let (diff, cancelled) = tokio::task::spawn_blocking(move || {
+        let refs: Vec<&FileEntry> = m.files.iter().collect();
+        scan::scan_with_progress(&install, &refs, ScanMode::Hash, control, cb)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(ScanSummary {
         ok: diff.ok,
         missing: diff.missing.len(),
         mismatched: diff.mismatched.len(),
         bytes_to_download: diff.bytes_to_download,
         checked: diff.checked,
+        cancelled,
     })
 }
 
@@ -204,7 +244,6 @@ async fn play(state: State<'_, AppState>) -> Result<PlayResult, String> {
     let manifest = cached_or_load(&state).await?;
     let cfg = state.config.lock().await.clone();
 
-    // Слой 1: обязательная проверка критичных файлов.
     let install = cfg.install_dir.clone();
     let m = manifest.clone();
     let report = tokio::task::spawn_blocking(move || verify::verify_critical(&install, &m))
@@ -214,11 +253,9 @@ async fn play(state: State<'_, AppState>) -> Result<PlayResult, String> {
         return Ok(PlayResult { launched: false, bad: report.bad });
     }
 
-    // Слой 2 (hook): получаем токен сессии (если backend доступен).
     let digest = verify::critical_digest(&manifest);
     let token = session::get_session(&state.client, &cfg.api_base, &manifest.version, &digest).await;
 
-    // Запуск (только из лаунчера).
     let install = cfg.install_dir.clone();
     let m = manifest.clone();
     tokio::task::spawn_blocking(move || launch::launch_game(&install, &m, token.as_deref()))
@@ -242,12 +279,12 @@ pub fn run() {
                 .unwrap_or_else(|_| PathBuf::from("."))
                 .join("config.json");
             let config = LauncherConfig::load(&config_path);
-            let client = default_client();
             app.manage(AppState {
                 config: Mutex::new(config),
                 manifest: Mutex::new(None),
-                client,
+                client: default_client(),
                 config_path,
+                control: Arc::new(Control::new()),
             });
             Ok(())
         })
@@ -258,7 +295,10 @@ pub fn run() {
             start_update,
             repair,
             verify_files,
-            play
+            play,
+            pause_tasks,
+            resume_tasks,
+            cancel_tasks
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

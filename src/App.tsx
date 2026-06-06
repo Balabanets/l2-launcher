@@ -9,7 +9,9 @@ import {
   FolderOpen,
   AlertTriangle,
   CheckCircle2,
+  Pause,
   X,
+  Square,
 } from "lucide-react";
 import {
   api,
@@ -28,8 +30,8 @@ type Phase =
   | "outdated"
   | "updating"
   | "ready"
-  | "verifying"
   | "repairing"
+  | "verifying"
   | "playing"
   | "error";
 
@@ -40,12 +42,16 @@ const RATES = [
   { label: "Drop", value: "x5" },
 ];
 
+// Операции с прогрессом, которые можно ставить на паузу/отменять.
+const RUNNING: Phase[] = ["updating", "repairing", "verifying"];
+
 export default function App() {
   const [phase, setPhase] = useState<Phase>("checking");
   const [status, setStatus] = useState("Проверка обновлений…");
   const [version, setVersion] = useState("—");
   const [bytesNeeded, setBytesNeeded] = useState(0);
   const [progress, setProgress] = useState<Progress | null>(null);
+  const [paused, setPaused] = useState(false);
   const [bad, setBad] = useState<string[]>([]);
   const [config, setConfig] = useState<LauncherConfig | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -53,7 +59,10 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      unlisten.current = await onProgress(setProgress);
+      unlisten.current = await onProgress((p) => {
+        setProgress(p);
+        setPaused(p.paused);
+      });
       try {
         setConfig(await api.getConfig());
       } catch {
@@ -86,6 +95,8 @@ export default function App() {
   }
 
   async function runUpdate() {
+    setProgress(null);
+    setPaused(false);
     setPhase("updating");
     setStatus("Загрузка обновления…");
     try {
@@ -97,27 +108,53 @@ export default function App() {
     }
   }
 
-  async function runRepair() {
-    setPhase("repairing");
-    setStatus("Полная проверка целостности…");
+  async function runVerify() {
+    setProgress(null);
+    setPaused(false);
+    setPhase("verifying");
+    setStatus("Проверка целостности файлов…");
     try {
-      const s = await api.repair();
-      setBad([]);
-      setStatus(
-        s.missing + s.mismatched === 0
-          ? `Все файлы целы (${s.ok})`
-          : `Восстановлено: ${s.missing + s.mismatched}, целых ${s.ok}`,
-      );
-      await runCheck();
+      const s = await api.verifyFiles();
+      if (s.cancelled) {
+        setStatus("Проверка отменена");
+      } else if (s.missing + s.mismatched === 0) {
+        setStatus(`Все файлы целы (${s.ok})`);
+      } else {
+        setStatus(`Найдено проблемных: ${s.missing + s.mismatched}. Нажмите «Восстановить».`);
+        setBad(Array(s.missing + s.mismatched).fill("file"));
+      }
+      await runCheck().then(() => {});
     } catch (e) {
       setPhase("error");
       setStatus(`Ошибка проверки: ${e}`);
     }
   }
 
+  async function runRepair() {
+    setProgress(null);
+    setPaused(false);
+    setPhase("repairing");
+    setStatus("Полная проверка и восстановление…");
+    try {
+      const s = await api.repair();
+      setBad([]);
+      setStatus(
+        s.cancelled
+          ? "Операция отменена"
+          : s.missing + s.mismatched === 0
+            ? `Все файлы целы (${s.ok})`
+            : `Восстановлено: ${s.missing + s.mismatched}, целых ${s.ok}`,
+      );
+      await runCheck();
+    } catch (e) {
+      setPhase("error");
+      setStatus(`Ошибка восстановления: ${e}`);
+    }
+  }
+
   async function runPlay() {
     setPhase("verifying");
-    setStatus("Проверка целостности перед запуском…");
+    setStatus("Проверка перед запуском…");
     try {
       const r = await api.play();
       if (r.launched) {
@@ -135,6 +172,20 @@ export default function App() {
     }
   }
 
+  async function togglePause() {
+    if (paused) {
+      await api.resume();
+      setPaused(false);
+    } else {
+      await api.pause();
+      setPaused(true);
+    }
+  }
+
+  async function doCancel() {
+    await api.cancel();
+  }
+
   async function pickInstallDir() {
     if (!config) return;
     const dir = await open({ directory: true, defaultPath: config.install_dir });
@@ -146,15 +197,15 @@ export default function App() {
     }
   }
 
-  const busy =
-    phase === "updating" || phase === "repairing" || phase === "verifying" || phase === "checking";
-  const pct = progress && progress.total > 0 ? (progress.downloaded / progress.total) * 100 : 0;
+  const running = RUNNING.includes(phase);
+  const busy = running || phase === "checking";
+  const pct = progress && progress.total > 0 ? (progress.processed / progress.total) * 100 : 0;
+  const showProgress = running && progress;
 
   return (
     <div className="flex h-full flex-col bg-[#0a0a0b] text-[#e9e4d8]">
       <TitleBar />
 
-      {/* фон + герой */}
       <div className="relative flex-1 overflow-hidden">
         <div
           className="pointer-events-none absolute inset-0 opacity-60"
@@ -199,8 +250,8 @@ export default function App() {
                 <AlertTriangle className="size-4" /> Нарушена целостность файлов
               </div>
               <ul className="max-h-20 overflow-auto font-mono text-[0.7rem] text-red-200/70">
-                {bad.slice(0, 6).map((b) => (
-                  <li key={b}>{b}</li>
+                {bad.slice(0, 6).map((b, i) => (
+                  <li key={i}>{b}</li>
                 ))}
                 {bad.length > 6 && <li>…и ещё {bad.length - 6}</li>}
               </ul>
@@ -209,18 +260,27 @@ export default function App() {
         </div>
       </div>
 
-      {/* нижняя панель управления */}
+      {/* нижняя панель */}
       <div className="glass relative z-10 px-6 py-5">
-        {(phase === "updating" || phase === "repairing") && progress && (
+        {showProgress && (
           <div className="mb-4">
+            <div className="mb-1.5 flex items-center justify-between text-[0.7rem] tracking-wide text-[rgba(233,228,216,0.55)] uppercase">
+              <span>
+                {progress!.phase === "verify" ? "Проверка целостности" : "Загрузка"}
+                {paused && " · на паузе"}
+              </span>
+              <span>
+                {progress!.files_done}/{progress!.files_total} файлов
+              </span>
+            </div>
             <div className="progress-track h-2.5">
               <div className="progress-fill" style={{ width: `${pct}%` }} />
             </div>
             <div className="mt-2 flex justify-between font-mono text-[0.7rem] text-[rgba(233,228,216,0.6)]">
-              <span className="truncate pr-3">{progress.current || "…"}</span>
+              <span className="truncate pr-3">{progress!.current || "…"}</span>
               <span className="shrink-0">
-                {fmtBytes(progress.downloaded)} / {fmtBytes(progress.total)} ·{" "}
-                {fmtSpeed(progress.speed_bps)} · ост. {fmtEta(progress.eta_secs)}
+                {fmtBytes(progress!.processed)} / {fmtBytes(progress!.total)} ·{" "}
+                {paused ? "пауза" : `${fmtSpeed(progress!.speed_bps)} · ост. ${fmtEta(progress!.eta_secs)}`}
               </span>
             </div>
           </div>
@@ -228,30 +288,43 @@ export default function App() {
 
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 text-sm">
-            <StatusIcon phase={phase} />
+            <StatusIcon phase={phase} paused={paused} />
             <span className="text-[rgba(233,228,216,0.8)]">{status}</span>
           </div>
 
           <div className="flex items-center gap-2">
-            <IconBtn title="Проверить файлы" onClick={runRepair} disabled={busy}>
-              <ShieldCheck className="size-4" />
-            </IconBtn>
-            <IconBtn title="Настройки" onClick={() => setShowSettings(true)} disabled={busy}>
-              <SettingsIcon className="size-4" />
-            </IconBtn>
-
-            {phase === "outdated" ? (
-              <PrimaryBtn onClick={runUpdate} disabled={busy}>
-                <Download className="size-4" /> Обновить · {fmtBytes(bytesNeeded)}
-              </PrimaryBtn>
-            ) : phase === "error" && bad.length > 0 ? (
-              <PrimaryBtn onClick={runRepair} disabled={busy}>
-                <RefreshCw className="size-4" /> Восстановить
-              </PrimaryBtn>
+            {running ? (
+              <>
+                <IconBtn title={paused ? "Возобновить" : "Пауза"} onClick={togglePause}>
+                  {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
+                </IconBtn>
+                <IconBtn title="Отменить" onClick={doCancel}>
+                  <Square className="size-4" />
+                </IconBtn>
+              </>
             ) : (
-              <PrimaryBtn onClick={runPlay} disabled={busy}>
-                <Play className="size-4" /> Играть
-              </PrimaryBtn>
+              <>
+                <IconBtn title="Проверить файлы" onClick={runVerify} disabled={busy}>
+                  <ShieldCheck className="size-4" />
+                </IconBtn>
+                <IconBtn title="Настройки" onClick={() => setShowSettings(true)} disabled={busy}>
+                  <SettingsIcon className="size-4" />
+                </IconBtn>
+
+                {phase === "outdated" ? (
+                  <PrimaryBtn onClick={runUpdate} disabled={busy}>
+                    <Download className="size-4" /> Обновить · {fmtBytes(bytesNeeded)}
+                  </PrimaryBtn>
+                ) : phase === "error" && bad.length > 0 ? (
+                  <PrimaryBtn onClick={runRepair} disabled={busy}>
+                    <RefreshCw className="size-4" /> Восстановить
+                  </PrimaryBtn>
+                ) : (
+                  <PrimaryBtn onClick={runPlay} disabled={busy}>
+                    <Play className="size-4" /> Играть
+                  </PrimaryBtn>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -272,7 +345,8 @@ export default function App() {
   );
 }
 
-function StatusIcon({ phase }: { phase: Phase }) {
+function StatusIcon({ phase, paused }: { phase: Phase; paused: boolean }) {
+  if (paused) return <Pause className="size-4 text-[#c9a45c]" />;
   if (phase === "ready" || phase === "playing")
     return <CheckCircle2 className="size-4 text-[#c9a45c]" />;
   if (phase === "error") return <AlertTriangle className="size-4 text-red-400" />;

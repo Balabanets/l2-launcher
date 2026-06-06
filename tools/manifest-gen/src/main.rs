@@ -29,6 +29,7 @@ struct Args {
     critical: Vec<String>,
     exe: String,
     cwd: Option<String>,
+    layout: String,
 }
 
 fn parse_args() -> Result<Args> {
@@ -40,6 +41,7 @@ fn parse_args() -> Result<Args> {
     let mut critical: Vec<String> = vec![];
     let mut exe = "system/l2.exe".to_string();
     let mut cwd = Some("system".to_string());
+    let mut layout = "path".to_string();
 
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -53,6 +55,7 @@ fn parse_args() -> Result<Args> {
             "--critical" => critical.push(val()?),
             "--exe" => exe = val()?,
             "--cwd" => cwd = Some(val()?),
+            "--layout" => layout = val()?,
             "-h" | "--help" => {
                 println!("{}", include_str!("../README_USAGE.txt"));
                 std::process::exit(0);
@@ -81,6 +84,7 @@ fn parse_args() -> Result<Args> {
         critical,
         exe,
         cwd,
+        layout,
     })
 }
 
@@ -152,6 +156,7 @@ fn main() -> Result<()> {
     let manifest = Manifest {
         version: args.version,
         base_url,
+        layout: args.layout,
         files,
         critical: args.critical,
         launch: LaunchSpec { exe: args.exe, args: vec![], cwd: args.cwd },
