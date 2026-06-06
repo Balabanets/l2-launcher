@@ -7,7 +7,7 @@
 //!   manifest-gen \
 //!     --client  /home/creative/l2-client-master \
 //!     --out     ./dist \
-//!     --base-url https://cdn.l2.balabanets.uk/client/ \
+//!     --base-url https://l2cdn.balabanets.uk/client/ \
 //!     --version 2026.06.06 \
 //!     --key     ./keys/manifest_ed25519.key   (32 байта приватного ключа, hex или base64)
 //!

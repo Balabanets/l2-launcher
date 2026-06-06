@@ -23,7 +23,7 @@ impl Default for LauncherConfig {
     fn default() -> Self {
         Self {
             install_dir: default_install_dir(),
-            manifest_url: "https://cdn.l2.balabanets.uk/client/manifest.json".to_string(),
+            manifest_url: "https://l2cdn.balabanets.uk/client/manifest.json".to_string(),
             api_base: "https://l2.balabanets.uk".to_string(),
             server_host: "l2.balabanets.uk".to_string(),
             server_port: 2106,

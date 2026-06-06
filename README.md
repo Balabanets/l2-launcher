@@ -55,17 +55,17 @@ npm run tauri dev      # запуск в dev (Linux — для проверки 
 
 ## Публикация клиента в R2
 
-1. Эталон клиента: `/home/creative/l2-client-master/`.
+1. Эталон клиента: `./master-client/`.
 2. Сгенерировать манифест:
    ```bash
    cargo run -p manifest-gen --bin manifest-gen -- \
-     --client /home/creative/l2-client-master --out ./dist-manifest \
-     --base-url https://cdn.l2.balabanets.uk/client/ --version $(date +%Y.%m.%d) \
+     --client ./master-client --out ./dist-manifest \
+     --base-url https://l2cdn.balabanets.uk/client/ --version $(date +%Y.%m.%d) \
      --key ~/.config/l2-launcher/keys/manifest.key
    ```
 3. Залить в R2 (через `aws s3 --endpoint-url` или `wrangler`): файлы клиента в `client/`,
    плюс `manifest.json` и `manifest.json.sig` рядом.
-4. В лаунчере `manifest_url` указывает на `https://cdn.l2.balabanets.uk/client/manifest.json`.
+4. В лаунчере `manifest_url` указывает на `https://l2cdn.balabanets.uk/client/manifest.json`.
 
 ## Команды backend (Tauri invoke)
 

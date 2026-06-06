@@ -7,19 +7,19 @@
 #     endpoint=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
 #
 # Переменные окружения:
-#   CLIENT_DIR   путь к эталонной копии клиента (по умолчанию /home/creative/l2-client-master)
+#   CLIENT_DIR   путь к эталонной копии клиента (по умолчанию ./master-client)
 #   R2_BUCKET    имя бакета R2 (например l2-client)
-#   BASE_URL     публичный URL раздачи (например https://cdn.l2.balabanets.uk/client/)
+#   BASE_URL     публичный URL раздачи (например https://l2cdn.balabanets.uk/client/)
 #   KEY_FILE     приватный ключ подписи (по умолчанию ~/.config/l2-launcher/keys/manifest.key)
 #
 # Пример:
-#   R2_BUCKET=l2-client BASE_URL=https://cdn.l2.balabanets.uk/client/ ./tools/publish.sh
+#   R2_BUCKET=l2-client BASE_URL=https://l2cdn.balabanets.uk/client/ ./tools/publish.sh
 set -euo pipefail
 
-CLIENT_DIR="${CLIENT_DIR:-/home/creative/l2-client-master}"
+CLIENT_DIR="${CLIENT_DIR:-./master-client}"
 KEY_FILE="${KEY_FILE:-$HOME/.config/l2-launcher/keys/manifest.key}"
 R2_BUCKET="${R2_BUCKET:?задай R2_BUCKET}"
-BASE_URL="${BASE_URL:?задай BASE_URL (например https://cdn.l2.balabanets.uk/client/)}"
+BASE_URL="${BASE_URL:?задай BASE_URL (например https://l2cdn.balabanets.uk/client/)}"
 VERSION="${VERSION:-$(date +%Y.%m.%d)}"
 OUT="./dist-manifest"
 
