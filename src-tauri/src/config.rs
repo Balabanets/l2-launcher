@@ -24,7 +24,7 @@ impl Default for LauncherConfig {
         Self {
             install_dir: default_install_dir(),
             manifest_url:
-                "https://github.com/Balabanets/l2-client/releases/download/client/manifest.json"
+                "https://github.com/Balabanets/l2-client/releases/download/manifest/manifest.json"
                     .to_string(),
             api_base: "https://l2.balabanets.uk".to_string(),
             server_host: "l2.balabanets.uk".to_string(),

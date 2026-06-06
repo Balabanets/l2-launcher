@@ -115,6 +115,7 @@ async fn full_update_verify_tamper_repair() {
     let manifest = Manifest {
         version: "test".into(),
         base_url: base_url.clone(),
+        base_urls: vec![],
         layout: "path".into(),
         files: vec![
             entry(&srv, "system/l2.exe"),
@@ -139,7 +140,7 @@ async fn full_update_verify_tamper_repair() {
     });
     let client = default_client();
     download::download_all(
-        &client, &install, &base_url, diff.to_fetch(), 4, false,
+        &client, &install, vec![base_url.clone()], diff.to_fetch(), 4, "path".into(),
         Arc::new(Control::new()), cb,
     )
     .await
@@ -170,7 +171,7 @@ async fn full_update_verify_tamper_repair() {
     // 8. Починка: докачиваем расхождения → снова валидно.
     let cb2: ProgressCb = Arc::new(|_p| {});
     download::download_all(
-        &client, &install, &base_url, diff.to_fetch(), 4, false,
+        &client, &install, vec![base_url.clone()], diff.to_fetch(), 4, "path".into(),
         Arc::new(Control::new()), cb2,
     )
     .await
@@ -202,7 +203,7 @@ async fn cas_layout_downloads_by_hash() {
     let client = default_client();
     let cb: ProgressCb = Arc::new(|_p| {});
     let outcome = download::download_all(
-        &client, &install, &base_url, entries.clone(), 4, /*cas*/ true,
+        &client, &install, vec![base_url.clone()], entries.clone(), 4, "cas".into(),
         Arc::new(Control::new()), cb,
     )
     .await
@@ -214,6 +215,35 @@ async fn cas_layout_downloads_by_hash() {
         let got = std::fs::read(install.join(path)).expect("файл должен существовать");
         assert_eq!(&got, bytes, "{path}");
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cas_multi_falls_back_to_second_source() {
+    // Два источника: файл есть только во втором → fallback по 404 должен его найти.
+    let srv1 = unique_tmp("srv_multi1");
+    let srv2 = unique_tmp("srv_multi2");
+    let bytes: &[u8] = b"file only present in the second release";
+    let h = l2_launcher_lib::l2_manifest::hash_bytes(bytes);
+    std::fs::write(srv2.join(&h), bytes).unwrap(); // только во втором источнике
+    let p1 = serve_dir(srv1.clone());
+    let p2 = serve_dir(srv2.clone());
+    let bases = vec![
+        format!("http://127.0.0.1:{}/", p1),
+        format!("http://127.0.0.1:{}/", p2),
+    ];
+    let entry = FileEntry { path: "system/x.dll".into(), size: bytes.len() as u64, sha256: h };
+
+    let install = unique_tmp("install_multi");
+    let client = default_client();
+    let cb: ProgressCb = Arc::new(|_p| {});
+    let outcome = download::download_all(
+        &client, &install, bases, vec![entry], 2, "cas-multi".into(),
+        Arc::new(Control::new()), cb,
+    )
+    .await
+    .expect("cas-multi должен найти файл во втором источнике");
+    assert_eq!(outcome, download::Outcome::Completed);
+    assert_eq!(std::fs::read(install.join("system/x.dll")).unwrap(), bytes);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -230,7 +260,7 @@ async fn cancel_stops_download() {
     control.cancel(); // отменяем заранее → файл не должен скачаться
     let cb: ProgressCb = Arc::new(|_p| {});
     let outcome = download::download_all(
-        &client, &install, &base_url, vec![entry], 2, false, control, cb,
+        &client, &install, vec![base_url.clone()], vec![entry], 2, "path".into(), control, cb,
     )
     .await
     .expect("отмена не должна быть ошибкой");
@@ -256,7 +286,7 @@ async fn rejects_corrupt_download() {
     let client = default_client();
     let cb: ProgressCb = Arc::new(|_p| {});
     let res = download::download_all(
-        &client, &install, &base_url, vec![wrong], 1, false,
+        &client, &install, vec![base_url.clone()], vec![wrong], 1, "path".into(),
         Arc::new(Control::new()), cb,
     )
     .await;

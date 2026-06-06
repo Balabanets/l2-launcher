@@ -43,9 +43,14 @@ pub struct Manifest {
     pub version: String,
     /// Базовый URL раздачи, со слешем на конце.
     pub base_url: String,
+    /// Несколько источников (для layout "cas-multi") — пробуются по порядку.
+    #[serde(default)]
+    pub base_urls: Vec<String>,
     /// Способ адресации файлов на раздаче:
-    ///  - "path": URL = base_url + относительный путь (R2/nginx)
-    ///  - "cas":  URL = base_url + sha256 (контентно-адресуемо, GitHub Releases)
+    ///  - "path":        URL = base_url + относительный путь (R2/nginx)
+    ///  - "cas":         URL = base_url + sha256 (GitHub Releases, один релиз)
+    ///  - "cas-sharded": URL = base_url + <1-й символ sha256> + "/" + sha256
+    ///  - "cas-multi":   sha256 ищется в нескольких релизах (base_urls) по порядку
     #[serde(default = "default_layout")]
     pub layout: String,
     pub files: Vec<FileEntry>,
@@ -152,6 +157,7 @@ mod tests {
         let m = Manifest {
             version: "t".into(),
             base_url: "https://x/".into(),
+            base_urls: vec![],
             layout: "path".into(),
             files: vec![],
             critical: vec!["system/*.dll".into(), "system/l2.exe".into()],

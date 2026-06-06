@@ -73,6 +73,15 @@ fn progress_cb(app: tauri::AppHandle) -> ProgressCb {
     })
 }
 
+/// Источники раздачи: для cas-multi — список base_urls, иначе один base_url.
+fn bases_of(m: &Manifest) -> Vec<String> {
+    if m.layout == "cas-multi" && !m.base_urls.is_empty() {
+        m.base_urls.clone()
+    } else {
+        vec![m.base_url.clone()]
+    }
+}
+
 // ---- helpers ----
 
 async fn load_manifest(state: &AppState) -> Result<Manifest, String> {
@@ -157,10 +166,10 @@ async fn start_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Resu
     download::download_all(
         &state.client,
         &cfg.install_dir,
-        &manifest.base_url,
+        bases_of(&manifest),
         to_fetch,
         cfg.concurrency,
-        manifest.is_cas(),
+        manifest.layout.clone(),
         state.control.clone(),
         progress_cb(app),
     )
@@ -200,10 +209,10 @@ async fn repair(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Sca
         download::download_all(
             &state.client,
             &cfg.install_dir,
-            &manifest.base_url,
+            bases_of(&manifest),
             to_fetch,
             cfg.concurrency,
-            manifest.is_cas(),
+            manifest.layout.clone(),
             state.control.clone(),
             progress_cb(app),
         )

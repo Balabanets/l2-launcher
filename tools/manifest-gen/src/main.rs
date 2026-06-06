@@ -23,7 +23,8 @@ use std::path::{Path, PathBuf};
 struct Args {
     client: PathBuf,
     out: PathBuf,
-    base_url: String,
+    /// Один или несколько источников (для cas-multi). Первый — основной base_url.
+    base_urls: Vec<String>,
     version: String,
     key: PathBuf,
     critical: Vec<String>,
@@ -35,7 +36,7 @@ struct Args {
 fn parse_args() -> Result<Args> {
     let mut client = None;
     let mut out = PathBuf::from("./dist");
-    let mut base_url = None;
+    let mut base_urls: Vec<String> = vec![];
     let mut version = None;
     let mut key = None;
     let mut critical: Vec<String> = vec![];
@@ -49,7 +50,7 @@ fn parse_args() -> Result<Args> {
         match a.as_str() {
             "--client" => client = Some(PathBuf::from(val()?)),
             "--out" => out = PathBuf::from(val()?),
-            "--base-url" => base_url = Some(val()?),
+            "--base-url" => base_urls.push(val()?),
             "--version" => version = Some(val()?),
             "--key" => key = Some(PathBuf::from(val()?)),
             "--critical" => critical.push(val()?),
@@ -75,10 +76,14 @@ fn parse_args() -> Result<Args> {
         ];
     }
 
+    if base_urls.is_empty() {
+        bail!("обязателен хотя бы один --base-url");
+    }
+
     Ok(Args {
         client: client.context("обязателен --client")?,
         out,
-        base_url: base_url.context("обязателен --base-url")?,
+        base_urls,
         version: version.context("обязателен --version")?,
         key: key.context("обязателен --key")?,
         critical,
@@ -148,14 +153,15 @@ fn main() -> Result<()> {
     eprintln!("Суммарный размер: {:.2} ГБ", total as f64 / 1e9);
 
     // 3. Собираем и подписываем манифест.
-    let base_url = if args.base_url.ends_with('/') {
-        args.base_url.clone()
-    } else {
-        format!("{}/", args.base_url)
-    };
+    let norm = |u: &str| if u.ends_with('/') { u.to_string() } else { format!("{u}/") };
+    let base_urls: Vec<String> = args.base_urls.iter().map(|u| norm(u)).collect();
+    let base_url = base_urls[0].clone();
+    // base_urls в манифесте имеет смысл только для cas-multi.
+    let manifest_base_urls = if args.layout == "cas-multi" { base_urls.clone() } else { vec![] };
     let manifest = Manifest {
         version: args.version,
         base_url,
+        base_urls: manifest_base_urls,
         layout: args.layout,
         files,
         critical: args.critical,

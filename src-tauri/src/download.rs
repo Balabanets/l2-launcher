@@ -25,25 +25,33 @@ enum FileStatus {
     Skipped, // отменено до завершения
 }
 
-/// Ключ адресации файла на раздаче.
-fn url_key<'a>(entry: &'a FileEntry, cas: bool) -> &'a str {
-    if cas {
-        &entry.sha256
-    } else {
-        &entry.path
+/// Список URL-кандидатов файла (пробуются по порядку, пока не 200/206):
+///  - "path":        [bases[0] + относительный путь]
+///  - "cas":         [bases[0] + sha256]
+///  - "cas-sharded": [bases[0] + <1-й символ sha256> + "/" + sha256]
+///  - "cas-multi":   [base + sha256 для каждого base из bases]
+fn candidate_urls(bases: &[String], layout: &str, entry: &FileEntry) -> Vec<String> {
+    match layout {
+        "cas" => vec![format!("{}{}", bases[0], entry.sha256)],
+        "cas-sharded" => {
+            let shard = &entry.sha256[..1];
+            vec![format!("{}{}/{}", bases[0], shard, entry.sha256)]
+        }
+        "cas-multi" => bases.iter().map(|b| format!("{}{}", b, entry.sha256)).collect(),
+        _ => vec![format!("{}{}", bases[0], entry.path)],
     }
 }
 
 async fn download_one(
     client: &reqwest::Client,
-    base_url: &str,
+    bases: &[String],
     install: &Path,
     entry: &FileEntry,
-    cas: bool,
+    layout: &str,
     control: &Control,
     shared: &Shared,
 ) -> Result<FileStatus> {
-    let url = format!("{}{}", base_url, url_key(entry, cas));
+    let urls = candidate_urls(bases, layout, entry);
     let target = install.join(&entry.path);
     let tmp = install.join(format!("{}.part", entry.path));
 
@@ -65,15 +73,27 @@ async fn download_one(
         shared.add_processed(existing);
     }
 
-    let mut req = client.get(&url);
-    if existing > 0 {
-        req = req.header(reqwest::header::RANGE, format!("bytes={}-", existing));
+    // Пробуем кандидатов по порядку; 404 → следующий источник.
+    let mut resp = None;
+    let last = urls.len().saturating_sub(1);
+    for (i, url) in urls.iter().enumerate() {
+        let mut req = client.get(url);
+        if existing > 0 {
+            req = req.header(reqwest::header::RANGE, format!("bytes={}-", existing));
+        }
+        let r = req.send().await.with_context(|| format!("скачивание {}", entry.path))?;
+        let status = r.status();
+        if status == reqwest::StatusCode::NOT_FOUND && i < last {
+            continue;
+        }
+        if !(status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT) {
+            bail!("{}: HTTP {}", entry.path, status);
+        }
+        resp = Some(r);
+        break;
     }
-    let resp = req.send().await.with_context(|| format!("скачивание {}", entry.path))?;
+    let resp = resp.with_context(|| format!("{}: не найден ни в одном источнике", entry.path))?;
     let status = resp.status();
-    if !(status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT) {
-        bail!("{}: HTTP {}", entry.path, status);
-    }
     let append = status == reqwest::StatusCode::PARTIAL_CONTENT && existing > 0;
     if !append && existing > 0 {
         shared.sub_processed(existing);
@@ -128,10 +148,10 @@ async fn download_one(
 pub async fn download_all(
     client: &reqwest::Client,
     install: &Path,
-    base_url: &str,
+    bases: Vec<String>,
     entries: Vec<FileEntry>,
     concurrency: usize,
-    cas: bool,
+    layout: String,
     control: Arc<Control>,
     progress: ProgressCb,
 ) -> Result<Outcome> {
@@ -158,20 +178,22 @@ pub async fn download_all(
 
     let sem = Arc::new(Semaphore::new(concurrency.max(1)));
     let mut handles = Vec::with_capacity(files_total);
+    let bases = Arc::new(bases);
     for entry in entries {
         let permit_sem = sem.clone();
         let client = client.clone();
-        let base_url = base_url.to_string();
+        let bases = bases.clone();
         let install = install.to_path_buf();
         let shared = shared.clone();
         let control = control.clone();
+        let layout = layout.clone();
         handles.push(tokio::spawn(async move {
             let _permit = permit_sem.acquire_owned().await.unwrap();
             // Пауза/отмена на границе файла.
             if !control.gate_async().await {
                 return Ok(FileStatus::Skipped);
             }
-            download_one(&client, &base_url, &install, &entry, cas, &control, &shared).await
+            download_one(&client, &bases, &install, &entry, &layout, &control, &shared).await
         }));
     }
 
