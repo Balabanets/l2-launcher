@@ -44,7 +44,11 @@ enum Status {
 }
 
 fn check_one(install: &Path, entry: &FileEntry, mode: ScanMode) -> Status {
-    let path = install.join(&entry.path);
+    // Небезопасный путь (path traversal) → считаем расхождением, не трогаем ФС за пределами install.
+    let path = match l2_manifest::safe_join(install, &entry.path) {
+        Some(p) => p,
+        None => return Status::Mismatch,
+    };
     let meta = match std::fs::metadata(&path) {
         Ok(m) => m,
         Err(_) => return Status::Missing,

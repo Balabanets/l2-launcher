@@ -1,6 +1,6 @@
 [package]
 name = "l2-launcher"
-version = "0.2.1"
+version = "0.3.0"
 description = "L2 Interlude Launcher"
 authors = ["balabanets"]
 edition.workspace = true
@@ -27,6 +27,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util
 futures-util = "0.3"
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+hmac = "0.12"
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

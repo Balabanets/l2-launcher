@@ -27,6 +27,19 @@ pub fn verify_critical(install: &Path, manifest: &Manifest) -> VerifyReport {
     }
 }
 
+/// Реальные SHA-256 критичных файлов с диска (path, sha256). Отсутствующие пропускаются —
+/// тогда сверка на сервере не сойдётся и авторизация будет отклонена.
+pub fn critical_real_hashes(install: &Path, manifest: &Manifest) -> Vec<(String, String)> {
+    manifest
+        .critical_files()
+        .iter()
+        .filter_map(|f| {
+            let p = l2_manifest::safe_join(install, &f.path)?;
+            l2_manifest::hash_file(&p).ok().map(|h| (f.path.clone(), h))
+        })
+        .collect()
+}
+
 /// Детерминированный дайджест состояния критичных файлов — для отправки на сервер.
 /// Сервер (aCis, Слой 2) сверяет его с эталоном и пускает только совпадающих.
 pub fn critical_digest(manifest: &Manifest) -> String {

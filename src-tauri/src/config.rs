@@ -70,4 +70,40 @@ impl LauncherConfig {
     pub fn signature_url(&self) -> String {
         format!("{}.sig", self.manifest_url)
     }
+
+    /// Проверка конфига перед сохранением: только доверенные хосты и абсолютный путь.
+    /// Защита от подмены источника раздачи (в т.ч. при XSS в WebView).
+    pub fn validate(&self) -> Result<(), String> {
+        if !is_allowed_url(&self.manifest_url) {
+            return Err(format!("недоверенный manifest_url: {}", self.manifest_url));
+        }
+        if !is_allowed_url(&self.api_base) {
+            return Err(format!("недоверенный api_base: {}", self.api_base));
+        }
+        if !self.install_dir.is_absolute() {
+            return Err("install_dir должен быть абсолютным путём".to_string());
+        }
+        if self.concurrency == 0 || self.concurrency > 32 {
+            return Err("concurrency должен быть 1..32".to_string());
+        }
+        Ok(())
+    }
+}
+
+/// Доверенные хосты для манифеста/API. Раздача файлов берётся из подписанного
+/// манифеста (base_urls), поэтому здесь только источник самого манифеста и API.
+pub const ALLOWED_HOSTS: &[&str] = &[
+    "github.com",
+    "objects.githubusercontent.com",
+    "l2.balabanets.uk",
+    "l2cdn.balabanets.uk",
+];
+
+/// Разрешён ли URL: только https и хост из белого списка.
+pub fn is_allowed_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let host = rest.split(['/', ':']).next().unwrap_or("");
+    ALLOWED_HOSTS.contains(&host)
 }

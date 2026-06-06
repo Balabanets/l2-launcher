@@ -41,11 +41,22 @@ jobs:
           # Приватный ключ апдейтера и его пароль — в секретах репозитория.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Общий с бэкендом HMAC-секрет авторизации лаунчера (вшивается при сборке).
+          LAUNCHER_HMAC_SECRET: ${{ secrets.LAUNCHER_HMAC_SECRET }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "L2 Interlude Launcher ${{ github.ref_name }}"
-          releaseBody: "Автообновляемый лаунчер. Скачайте установщик .exe ниже."
+          releaseBody: "Установщик (.exe/.msi) ниже. Также есть портативная версия L2-Interlude-portable.exe — скачал и запустил, без установки (нужен системный WebView2, есть в Windows 10/11)."
           releaseDraft: false
           prerelease: false
           # latest.json для встроенного апдейтера Tauri публикуется автоматически.
           includeUpdaterJson: true
+
+      - name: Upload portable exe
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp "src-tauri/target/release/L2 Interlude.exe" "L2-Interlude-portable.exe"
+          gh release upload "${{ github.ref_name }}" "L2-Interlude-portable.exe" \
+            --repo "${{ github.repository }}" --clobber

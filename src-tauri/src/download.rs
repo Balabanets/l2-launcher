@@ -52,8 +52,11 @@ async fn download_one(
     shared: &Shared,
 ) -> Result<FileStatus> {
     let urls = candidate_urls(bases, layout, entry);
-    let target = install.join(&entry.path);
-    let tmp = install.join(format!("{}.part", entry.path));
+    // Защита от path traversal — пишем строго внутри install.
+    let target = l2_manifest::safe_join(install, &entry.path)
+        .with_context(|| format!("небезопасный путь в манифесте: {}", entry.path))?;
+    let tmp = l2_manifest::safe_join(install, &format!("{}.part", entry.path))
+        .with_context(|| format!("небезопасный путь: {}", entry.path))?;
 
     if let Some(parent) = target.parent() {
         tokio::fs::create_dir_all(parent).await.ok();

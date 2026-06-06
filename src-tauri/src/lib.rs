@@ -124,6 +124,7 @@ async fn get_config(state: State<'_, AppState>) -> Result<LauncherConfig, String
 
 #[tauri::command]
 async fn save_config(state: State<'_, AppState>, config: LauncherConfig) -> Result<(), String> {
+    config.validate()?; // отклоняем недоверенные источники / некорректные пути
     config.save(&state.config_path).map_err(|e| e.to_string())?;
     *state.config.lock().await = config;
     Ok(())
@@ -253,26 +254,46 @@ async fn play(state: State<'_, AppState>) -> Result<PlayResult, String> {
     let manifest = cached_or_load(&state).await?;
     let cfg = state.config.lock().await.clone();
 
+    // Слой 1: проверка критичных файлов + сбор реальных хешей для авторизации.
     let install = cfg.install_dir.clone();
     let m = manifest.clone();
-    let report = tokio::task::spawn_blocking(move || verify::verify_critical(&install, &m))
-        .await
-        .map_err(|e| e.to_string())?;
+    let (report, real_hashes) = tokio::task::spawn_blocking(move || {
+        let report = verify::verify_critical(&install, &m);
+        let hashes = if report.ok { verify::critical_real_hashes(&install, &m) } else { vec![] };
+        (report, hashes)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     if !report.ok {
         return Ok(PlayResult { launched: false, bad: report.bad });
     }
 
-    let digest = verify::critical_digest(&manifest);
-    let token = session::get_session(&state.client, &cfg.api_base, &manifest.version, &digest).await;
+    // Слой 2: авторизуем IP на бэкенде (сервер aCis проверит это при логине).
+    // Результат не блокирует запуск — enforcement живёт на стороне сервера.
+    let _authorized =
+        session::authorize(&state.client, &cfg.api_base, &manifest.version, real_hashes).await;
 
+    // Финальная проверка целостности НЕПОСРЕДСТВЕННО перед запуском — сужает TOCTOU-окно
+    // (между этой проверкой и spawn нет сетевых задержек).
     let install = cfg.install_dir.clone();
     let m = manifest.clone();
-    tokio::task::spawn_blocking(move || launch::launch_game(&install, &m, token.as_deref()))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
+    let recheck = tokio::task::spawn_blocking(move || {
+        let report = verify::verify_critical(&install, &m);
+        if report.ok {
+            launch::launch_game(&install, &m, None).map(|_| Vec::new())
+        } else {
+            Ok(report.bad)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
 
-    Ok(PlayResult { launched: true, bad: vec![] })
+    if recheck.is_empty() {
+        Ok(PlayResult { launched: true, bad: vec![] })
+    } else {
+        Ok(PlayResult { launched: false, bad: recheck })
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

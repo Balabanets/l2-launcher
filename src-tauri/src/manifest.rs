@@ -41,5 +41,12 @@ pub async fn fetch_manifest(client: &reqwest::Client, manifest_url: &str, sig_ur
     }
 
     let manifest: Manifest = serde_json::from_slice(&raw).context("манифест: неверный JSON")?;
+
+    // Защита от path traversal: ни один путь не должен выходить за пределы install-папки.
+    let bad = manifest.unsafe_paths();
+    if !bad.is_empty() {
+        bail!("манифест содержит небезопасные пути (path traversal): {:?}", &bad[..bad.len().min(5)]);
+    }
+
     Ok(manifest)
 }

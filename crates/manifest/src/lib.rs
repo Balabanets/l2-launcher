@@ -5,7 +5,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 pub const MANIFEST_FILE: &str = "manifest.json";
 pub const SIGNATURE_FILE: &str = "manifest.json.sig";
@@ -94,6 +94,25 @@ impl Manifest {
     pub fn is_cas(&self) -> bool {
         self.layout == "cas"
     }
+
+    /// Небезопасные пути в манифесте (path traversal / абсолютные). Должно быть пусто.
+    pub fn unsafe_paths(&self) -> Vec<String> {
+        let mut bad = Vec::new();
+        for f in &self.files {
+            if !is_safe_rel(&f.path) {
+                bad.push(f.path.clone());
+            }
+        }
+        if !is_safe_rel(&self.launch.exe) {
+            bad.push(self.launch.exe.clone());
+        }
+        if let Some(c) = &self.launch.cwd {
+            if !is_safe_rel(c) {
+                bad.push(c.clone());
+            }
+        }
+        bad
+    }
 }
 
 /// Подписать байты приватным ключом → подпись в base64.
@@ -136,6 +155,24 @@ pub fn hash_bytes(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
 }
 
+/// Безопасен ли относительный путь: только обычные сегменты, без `..`, без абсолютного
+/// пути и без префикса диска. Защита от path traversal (на случай компрометации манифеста).
+pub fn is_safe_rel(rel: &str) -> bool {
+    if rel.is_empty() {
+        return false;
+    }
+    Path::new(rel).components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+}
+
+/// Присоединить относительный путь к базовому только если он безопасен.
+pub fn safe_join(base: &Path, rel: &str) -> Option<PathBuf> {
+    if is_safe_rel(rel) {
+        Some(base.join(rel))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,6 +187,20 @@ mod tests {
         let sig = sign(&sk_bytes, data);
         assert!(verify(&pk, data, &sig).is_ok());
         assert!(verify(&pk, b"tampered", &sig).is_err());
+    }
+
+    #[test]
+    fn path_traversal_rejected() {
+        assert!(is_safe_rel("system/l2.exe"));
+        assert!(is_safe_rel("textures/a.utx"));
+        assert!(!is_safe_rel("../../etc/passwd"));
+        assert!(!is_safe_rel("system/../../../etc/passwd"));
+        assert!(!is_safe_rel("/etc/passwd"));
+        assert!(!is_safe_rel(""));
+        let base = Path::new("/install");
+        assert!(safe_join(base, "system/l2.exe").is_some());
+        assert!(safe_join(base, "../evil").is_none());
+        assert!(safe_join(base, "/abs").is_none());
     }
 
     #[test]
