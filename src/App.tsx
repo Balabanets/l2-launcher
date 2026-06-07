@@ -101,7 +101,7 @@ export default function App() {
         .then((s) => alive && setSrv(s))
         .catch(() => {});
     load();
-    const id = setInterval(load, 30_000);
+    const id = setInterval(load, 15_000);
     return () => {
       alive = false;
       clearInterval(id);
