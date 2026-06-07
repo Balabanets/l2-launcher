@@ -12,11 +12,18 @@ use std::time::Instant;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ScanMode {
-    /// Быстро: только наличие + размер.
+    /// Быстро: наличие + размер для крупных ассетов, SHA-256 для мелких файлов.
     Quick,
     /// Полно: SHA-256 каждого файла.
     Hash,
 }
+
+/// В Quick-режиме файлы не крупнее этого порога хешируются всегда. Именно мелкие
+/// файлы (ini/dat/int/htm/txt — конфиги, локализация, адрес логин-сервера) меняются
+/// с сохранением размера, поэтому проверка только по размеру их подмену пропускает.
+/// Крупные ассеты (текстуры/меши) при идентичном размере байт-в-байт не меняются —
+/// для них достаточно размера, а полную сверку даёт кнопка «Проверить файлы».
+const QUICK_HASH_MAX_BYTES: u64 = 1 << 20; // 1 МиБ
 
 #[derive(Debug, Default, Serialize)]
 pub struct Diff {
@@ -59,7 +66,9 @@ fn check_one(install: &Path, entry: &FileEntry, mode: ScanMode) -> Status {
     if meta.len() != entry.size {
         return Status::Mismatch;
     }
-    if mode == ScanMode::Quick {
+    // Крупные ассеты в быстром режиме сверяем только по размеру; мелкие файлы —
+    // всегда по SHA-256, чтобы ловить подмену с сохранением размера (см. порог выше).
+    if mode == ScanMode::Quick && entry.size > QUICK_HASH_MAX_BYTES {
         return Status::Ok;
     }
     match l2_manifest::hash_file(&path) {
@@ -149,4 +158,64 @@ pub fn scan_all(install: &Path, manifest: &Manifest, mode: ScanMode) -> Diff {
 pub fn scan_critical(install: &Path, manifest: &Manifest, mode: ScanMode) -> Diff {
     let refs = manifest.critical_files();
     scan(install, &refs, mode)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static SEQ: AtomicU32 = AtomicU32::new(0);
+
+    fn unique_tmp(tag: &str) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("l2scan_{}_{}", tag, SEQ.fetch_add(1, Ordering::SeqCst)));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn entry(path: &str, bytes: &[u8]) -> FileEntry {
+        FileEntry {
+            path: path.to_string(),
+            size: bytes.len() as u64,
+            sha256: l2_manifest::hash_bytes(bytes),
+        }
+    }
+
+    fn write(dir: &std::path::Path, rel: &str, bytes: &[u8]) {
+        let p = dir.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, bytes).unwrap();
+    }
+
+    /// Мелкий файл с тем же размером, но другим содержимым в Quick-режиме
+    /// должен распознаваться как изменённый (а не считаться целым по размеру).
+    #[test]
+    fn quick_detects_same_size_content_change_for_small_files() {
+        let dir = unique_tmp("changed");
+        // Манифест ожидает "aaaa", на диске лежит "bbbb" — размер совпадает, хеш нет.
+        let e = entry("system/l2.ini", b"aaaa");
+        write(&dir, "system/l2.ini", b"bbbb");
+
+        let diff = scan(&dir, &[&e], ScanMode::Quick);
+        assert_eq!(diff.mismatched.len(), 1, "подмена мелкого файла должна ловиться в Quick");
+        assert_eq!(diff.ok, 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Идентичный мелкий файл в Quick-режиме считается целым.
+    #[test]
+    fn quick_accepts_matching_small_file() {
+        let dir = unique_tmp("match");
+        let e = entry("system/l2.ini", b"hello world");
+        write(&dir, "system/l2.ini", b"hello world");
+
+        let diff = scan(&dir, &[&e], ScanMode::Quick);
+        assert_eq!(diff.ok, 1);
+        assert!(diff.mismatched.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

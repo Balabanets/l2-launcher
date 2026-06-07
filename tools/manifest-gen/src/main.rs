@@ -20,6 +20,17 @@ use l2_manifest::{sign, FileEntry, LaunchSpec, Manifest, MANIFEST_FILE, SIGNATUR
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 
+/// Имена файлов (без учёта регистра), которые НЕ попадают в манифест: это
+/// изменяемое пер-игроком состояние, а не часть дистрибутива. Их раздача либо
+/// утекает чужие данные (AutoLogin.ini хранит логин/пароль), либо вызывает ложные
+/// «требуется обновление», когда игрок сохраняет свой вход.
+const IGNORED_FILENAMES: &[&str] = &["autologin.ini"];
+
+fn is_ignored(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    IGNORED_FILENAMES.contains(&lower.as_str())
+}
+
 struct Args {
     client: PathBuf,
     out: PathBuf,
@@ -125,6 +136,10 @@ fn main() -> Result<()> {
         if entry.file_type().is_file() {
             let name = entry.file_name().to_string_lossy();
             if name == MANIFEST_FILE || name == SIGNATURE_FILE {
+                continue;
+            }
+            if is_ignored(&name) {
+                eprintln!("Пропускаю (пер-игровое состояние): {}", entry.path().display());
                 continue;
             }
             paths.push(entry.path().to_path_buf());

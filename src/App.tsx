@@ -542,10 +542,6 @@ function Settings({
           }
           className="mb-2 w-24 rounded-lg border border-[rgba(201,164,92,0.2)] bg-black/30 px-3 py-2 font-mono text-sm"
         />
-
-        <p className="mt-4 text-[0.7rem] leading-relaxed text-[rgba(233,228,216,0.4)]">
-          Сервер: {config.server_host}:{config.server_port}
-        </p>
       </div>
     </div>
   );

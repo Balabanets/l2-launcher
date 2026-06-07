@@ -201,7 +201,8 @@ async fn save_config(state: State<'_, AppState>, config: LauncherConfig) -> Resu
     Ok(())
 }
 
-/// Быстрая проверка обновлений (наличие+размер).
+/// Быстрая проверка обновлений: наличие + размер крупных ассетов и SHA-256 мелких
+/// файлов (конфиги/данные меняются с сохранением размера — ловим их по хешу).
 #[tauri::command]
 async fn check_update(state: State<'_, AppState>) -> Result<CheckResult, String> {
     let manifest = load_manifest(&state).await?;
