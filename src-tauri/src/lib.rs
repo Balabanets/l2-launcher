@@ -154,16 +154,17 @@ async fn get_config(state: State<'_, AppState>) -> Result<LauncherConfig, String
 }
 
 #[derive(Serialize)]
-pub struct ServerStatusOut {
+pub struct ServerInfoOut {
+    pub id: String,
+    pub name: String,
     pub online: bool,
     pub players: u32,
     pub max: u32,
-    pub note: Option<String>,
 }
 
-/// Живой статус сервера (через backend; CSP не даёт фронту ходить наружу напрямую).
+/// Живой статус всех серверов (через backend; CSP не даёт фронту ходить наружу напрямую).
 #[tauri::command]
-async fn server_status(state: State<'_, AppState>) -> Result<ServerStatusOut, String> {
+async fn server_status(state: State<'_, AppState>) -> Result<Vec<ServerInfoOut>, String> {
     let api = state.config.lock().await.api_base.clone();
     let url = format!("{}/api/status", api.trim_end_matches('/'));
     let resp = state
@@ -177,12 +178,17 @@ async fn server_status(state: State<'_, AppState>) -> Result<ServerStatusOut, St
         return Err(format!("status HTTP {}", resp.status()));
     }
     let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(ServerStatusOut {
-        online: v.get("online").and_then(|x| x.as_bool()).unwrap_or(false),
-        players: v.get("players").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
-        max: v.get("max").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
-        note: v.get("note").and_then(|x| x.as_str()).map(|s| s.to_string()),
-    })
+    let servers = v.get("servers").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+    Ok(servers
+        .iter()
+        .map(|s| ServerInfoOut {
+            id: s.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            name: s.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            online: s.get("online").and_then(|x| x.as_bool()).unwrap_or(false),
+            players: s.get("players").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+            max: s.get("max").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -311,19 +317,20 @@ async fn verify_files(app: tauri::AppHandle, state: State<'_, AppState>) -> Resu
     })
 }
 
-/// Запустить игру: ВСЕГДА проверяет критичные файлы. При несовпадении — не запускает.
+/// Запустить игру: проверяет критичные файлы (с прогрессом). При несовпадении — не запускает.
 #[tauri::command]
-async fn play(state: State<'_, AppState>) -> Result<PlayResult, String> {
+async fn play(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PlayResult, String> {
+    state.control.reset();
     let manifest = cached_or_load(&state).await?;
     let cfg = state.config.lock().await.clone();
 
-    // Слой 1: проверка критичных файлов + сбор реальных хешей для авторизации.
+    // Слой 1: проверка критичных файлов + сбор реальных хешей ЗА ОДИН проход, с прогрессом.
     let install = cfg.install_dir.clone();
     let m = manifest.clone();
+    let control = state.control.clone();
+    let cb = progress_cb(app);
     let (report, real_hashes) = tokio::task::spawn_blocking(move || {
-        let report = verify::verify_critical(&install, &m);
-        let hashes = if report.ok { verify::critical_real_hashes(&install, &m) } else { vec![] };
-        (report, hashes)
+        verify::verify_and_hash_critical(&install, &m, control, cb)
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -332,7 +339,6 @@ async fn play(state: State<'_, AppState>) -> Result<PlayResult, String> {
     }
 
     // Слой 2: авторизуем IP на бэкенде (сервер aCis проверит это при входе в мир).
-    // Результат не блокирует запуск — enforcement живёт на стороне сервера.
     let _authorized =
         session::authorize(&state.client, &cfg.api_base, &manifest.version, real_hashes).await;
 
@@ -346,27 +352,15 @@ async fn play(state: State<'_, AppState>) -> Result<PlayResult, String> {
         );
     }
 
-    // Финальная проверка целостности НЕПОСРЕДСТВЕННО перед запуском — сужает TOCTOU-окно
-    // (между этой проверкой и spawn нет сетевых задержек).
+    // Запуск (критичные файлы только что проверены — повторно не хешируем).
     let install = cfg.install_dir.clone();
     let m = manifest.clone();
-    let recheck = tokio::task::spawn_blocking(move || {
-        let report = verify::verify_critical(&install, &m);
-        if report.ok {
-            launch::launch_game(&install, &m, None).map(|_| Vec::new())
-        } else {
-            Ok(report.bad)
-        }
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || launch::launch_game(&install, &m, None))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
 
-    if recheck.is_empty() {
-        Ok(PlayResult { launched: true, bad: vec![] })
-    } else {
-        Ok(PlayResult { launched: false, bad: recheck })
-    }
+    Ok(PlayResult { launched: true, bad: vec![] })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

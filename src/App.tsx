@@ -23,7 +23,7 @@ import {
   fmtEta,
   type LauncherConfig,
   type Progress,
-  type ServerStatus,
+  type ServerInfo,
 } from "./lib/api";
 import { TitleBar } from "./components/TitleBar";
 import { Sigil } from "./components/Sigil";
@@ -60,7 +60,7 @@ export default function App() {
   const [bad, setBad] = useState<string[]>([]);
   const [config, setConfig] = useState<LauncherConfig | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [srv, setSrv] = useState<ServerStatus | null>(null);
+  const [srv, setSrv] = useState<ServerInfo[] | null>(null);
   const unlisten = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -380,24 +380,35 @@ export default function App() {
   );
 }
 
-function StatusPill({ srv }: { srv: ServerStatus | null }) {
-  const online = srv?.online ?? false;
-  const label = srv
-    ? online
-      ? `Онлайн · ${srv.players}${srv.max ? `/${srv.max}` : ""}`
-      : srv.note || "Сервер оффлайн"
-    : "Проверка статуса…";
-  const color = online ? "#34d399" : "#c9a45c";
+function StatusPill({ srv }: { srv: ServerInfo[] | null }) {
+  if (!srv) {
+    return <div className="text-xs text-[rgba(233,228,216,0.45)]">Проверка статуса серверов…</div>;
+  }
   return (
-    <div className="inline-flex items-center gap-2.5 rounded-full border border-[rgba(201,164,92,0.2)] bg-white/[0.03] px-4 py-1.5 text-xs text-[rgba(233,228,216,0.75)]">
-      <span className="relative flex size-2">
-        <span
-          className="absolute inline-flex size-2 rounded-full"
-          style={{ background: color, animation: "status-ping 1.6s cubic-bezier(0,0,0.2,1) infinite" }}
-        />
-        <span className="relative inline-flex size-2 rounded-full" style={{ background: color }} />
-      </span>
-      <span className="tracking-wide">{label}</span>
+    <div className="flex flex-wrap items-center justify-center gap-2">
+      {srv.map((s) => {
+        const color = s.online ? "#34d399" : "#c9a45c";
+        return (
+          <span
+            key={s.id}
+            className="inline-flex items-center gap-2 rounded-full border border-[rgba(201,164,92,0.2)] bg-white/[0.03] px-3.5 py-1.5 text-xs text-[rgba(233,228,216,0.75)]"
+          >
+            <span className="relative flex size-2">
+              {s.online && (
+                <span
+                  className="absolute inline-flex size-2 rounded-full"
+                  style={{ background: color, animation: "status-ping 1.6s cubic-bezier(0,0,0.2,1) infinite" }}
+                />
+              )}
+              <span className="relative inline-flex size-2 rounded-full" style={{ background: color }} />
+            </span>
+            <span className="font-medium text-[rgba(233,228,216,0.9)]">{s.name}</span>
+            <span className="text-[rgba(233,228,216,0.45)]">
+              {s.online ? `${s.players}${s.max ? `/${s.max}` : ""}` : "оффлайн"}
+            </span>
+          </span>
+        );
+      })}
     </div>
   );
 }

@@ -46,17 +46,18 @@ export interface Progress {
   done: boolean;
 }
 
-export interface ServerStatus {
+export interface ServerInfo {
+  id: string;
+  name: string;
   online: boolean;
   players: number;
   max: number;
-  note?: string | null;
 }
 
 export const api = {
   getConfig: () => invoke<LauncherConfig>("get_config"),
   saveConfig: (config: LauncherConfig) => invoke<void>("save_config", { config }),
-  serverStatus: () => invoke<ServerStatus>("server_status"),
+  serverStatus: () => invoke<ServerInfo[]>("server_status"),
   checkUpdate: () => invoke<CheckResult>("check_update"),
   startUpdate: () => invoke<void>("start_update"),
   repair: () => invoke<ScanSummary>("repair"),
