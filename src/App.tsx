@@ -23,9 +23,11 @@ import {
   fmtEta,
   type LauncherConfig,
   type Progress,
+  type ServerStatus,
 } from "./lib/api";
 import { TitleBar } from "./components/TitleBar";
 import { Sigil } from "./components/Sigil";
+import { Ambient } from "./components/Ambient";
 
 type Phase =
   | "checking"
@@ -38,11 +40,12 @@ type Phase =
   | "error";
 
 const RATES = [
-  { label: "EXP", value: "x10" },
-  { label: "SP", value: "x10" },
-  { label: "Adena", value: "x5" },
-  { label: "Drop", value: "x5" },
+  { label: "EXP", value: "x1" },
+  { label: "SP", value: "x1" },
+  { label: "Adena", value: "x1" },
+  { label: "Drop", value: "x1" },
 ];
+
 
 // Операции с прогрессом, которые можно ставить на паузу/отменять.
 const RUNNING: Phase[] = ["updating", "repairing", "verifying"];
@@ -57,6 +60,7 @@ export default function App() {
   const [bad, setBad] = useState<string[]>([]);
   const [config, setConfig] = useState<LauncherConfig | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [srv, setSrv] = useState<ServerStatus | null>(null);
   const unlisten = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -75,6 +79,22 @@ export default function App() {
     })();
     return () => unlisten.current?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Живой статус сервера: опрос раз в 30с.
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api
+        .serverStatus()
+        .then((s) => alive && setSrv(s))
+        .catch(() => {});
+    load();
+    const id = setInterval(load, 30_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
   }, []);
 
   // Самообновление лаунчера из GitHub-релизов (Tauri updater). Тихо игнорируем
@@ -226,13 +246,8 @@ export default function App() {
       <TitleBar />
 
       <div className="relative flex-1 overflow-hidden">
-        <div
-          className="pointer-events-none absolute inset-0 opacity-60"
-          style={{
-            background:
-              "radial-gradient(120% 80% at 50% -10%, rgba(201,164,92,0.10), transparent 60%), radial-gradient(80% 60% at 50% 120%, rgba(201,164,92,0.05), transparent 55%)",
-          }}
-        />
+        <Ambient />
+        {/* тонкая решётка */}
         <div
           className="pointer-events-none absolute inset-0 opacity-[0.05]"
           style={{
@@ -244,18 +259,19 @@ export default function App() {
           }}
         />
 
-        <div className="relative flex h-full flex-col items-center justify-center px-10 text-center">
-          <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[rgba(201,164,92,0.25)] bg-white/[0.03] px-4 py-1.5 text-[0.7rem] tracking-[0.2em] text-[rgba(201,164,92,0.9)] uppercase">
-            <span className="size-1.5 rounded-full bg-[#c9a45c]" />
-            Хроника Interlude · сборка {version}
+        <div className="reveal relative flex h-full flex-col items-center justify-center px-10 text-center">
+          <StatusPill srv={srv} />
+
+          <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-[rgba(201,164,92,0.25)] bg-white/[0.03] px-4 py-1.5 text-[0.7rem] tracking-[0.2em] text-[rgba(201,164,92,0.9)] uppercase">
+            Хроника Interlude · сборка {version} · Classic x1
           </div>
-          <h1 className="font-display text-6xl font-extrabold leading-none">
-            <span className="text-gold-gradient">INTERLUDE</span>
+          <h1 className="mt-4 font-display text-6xl font-extrabold leading-none">
+            <span className="shimmer-gold">INTERLUDE</span>
           </h1>
           <ul className="mt-7 flex items-center gap-7">
             {RATES.map((r) => (
               <li key={r.label} className="flex flex-col items-center">
-                <span className="text-2xl font-semibold text-[#c9a45c]">{r.value}</span>
+                <span className="font-mono text-2xl font-semibold text-[#c9a45c]">{r.value}</span>
                 <span className="text-[0.65rem] tracking-[0.18em] text-[rgba(233,228,216,0.45)] uppercase">
                   {r.label}
                 </span>
@@ -360,6 +376,28 @@ export default function App() {
           onClose={() => setShowSettings(false)}
         />
       )}
+    </div>
+  );
+}
+
+function StatusPill({ srv }: { srv: ServerStatus | null }) {
+  const online = srv?.online ?? false;
+  const label = srv
+    ? online
+      ? `Онлайн · ${srv.players}${srv.max ? `/${srv.max}` : ""}`
+      : srv.note || "Сервер оффлайн"
+    : "Проверка статуса…";
+  const color = online ? "#34d399" : "#c9a45c";
+  return (
+    <div className="inline-flex items-center gap-2.5 rounded-full border border-[rgba(201,164,92,0.2)] bg-white/[0.03] px-4 py-1.5 text-xs text-[rgba(233,228,216,0.75)]">
+      <span className="relative flex size-2">
+        <span
+          className="absolute inline-flex size-2 rounded-full"
+          style={{ background: color, animation: "status-ping 1.6s cubic-bezier(0,0,0.2,1) infinite" }}
+        />
+        <span className="relative inline-flex size-2 rounded-full" style={{ background: color }} />
+      </span>
+      <span className="tracking-wide">{label}</span>
     </div>
   );
 }

@@ -100,3 +100,52 @@ h3 {
 .pulse {
   animation: pulse-gold 2s ease-in-out infinite;
 }
+
+/* ---- Ambient / motion (тонкая элегантность) ---- */
+.shimmer-gold {
+  background: linear-gradient(
+    100deg,
+    #c9a45c 0%, #8a7440 30%, #f7ebc8 48%, #e0c486 52%, #c9a45c 70%, #8a7440 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 7s ease-in-out infinite;
+}
+.breathe { animation: breathe 8s ease-in-out infinite; }
+
+@keyframes shimmer {
+  0% { background-position: 130% 0; }
+  100% { background-position: -30% 0; }
+}
+@keyframes breathe {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 0.72; transform: scale(1.06); }
+}
+@keyframes fog-drift {
+  0% { transform: translate3d(-4%, 0, 0) scale(1.05); }
+  50% { transform: translate3d(4%, -2%, 0) scale(1.12); }
+  100% { transform: translate3d(-4%, 0, 0) scale(1.05); }
+}
+@keyframes ember-rise {
+  0% { transform: translateY(0) translateX(0); opacity: 0; }
+  12% { opacity: var(--ember-o, 0.4); }
+  88% { opacity: var(--ember-o, 0.4); }
+  100% { transform: translateY(-100vh) translateX(var(--ember-x, 16px)); opacity: 0; }
+}
+@keyframes status-ping {
+  0% { transform: scale(1); opacity: 0.6; }
+  70%, 100% { transform: scale(2.4); opacity: 0; }
+}
+@keyframes reveal-up {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* Появление — чистый CSS: по умолчанию видимо, анимация только если движение разрешено. */
+@media (prefers-reduced-motion: no-preference) {
+  .reveal { opacity: 0; animation: reveal-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-gold, .breathe, .pulse { animation: none; }
+}

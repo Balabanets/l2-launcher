@@ -153,6 +153,38 @@ async fn get_config(state: State<'_, AppState>) -> Result<LauncherConfig, String
     Ok(state.config.lock().await.clone())
 }
 
+#[derive(Serialize)]
+pub struct ServerStatusOut {
+    pub online: bool,
+    pub players: u32,
+    pub max: u32,
+    pub note: Option<String>,
+}
+
+/// Живой статус сервера (через backend; CSP не даёт фронту ходить наружу напрямую).
+#[tauri::command]
+async fn server_status(state: State<'_, AppState>) -> Result<ServerStatusOut, String> {
+    let api = state.config.lock().await.api_base.clone();
+    let url = format!("{}/api/status", api.trim_end_matches('/'));
+    let resp = state
+        .client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(6))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("status HTTP {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(ServerStatusOut {
+        online: v.get("online").and_then(|x| x.as_bool()).unwrap_or(false),
+        players: v.get("players").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+        max: v.get("max").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+        note: v.get("note").and_then(|x| x.as_str()).map(|s| s.to_string()),
+    })
+}
+
 #[tauri::command]
 async fn save_config(state: State<'_, AppState>, config: LauncherConfig) -> Result<(), String> {
     config.validate()?; // отклоняем недоверенные источники / некорректные пути
@@ -364,6 +396,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_config,
             save_config,
+            server_status,
             check_update,
             start_update,
             repair,
