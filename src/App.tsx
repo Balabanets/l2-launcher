@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { check as checkLauncherUpdate } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import {
   Play,
   ShieldCheck,
@@ -68,11 +70,28 @@ export default function App() {
       } catch {
         /* ignore */
       }
+      await selfUpdate();
       await runCheck();
     })();
     return () => unlisten.current?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Самообновление лаунчера из GitHub-релизов (Tauri updater). Тихо игнорируем
+  // ошибки (оффлайн/dev) — тогда просто продолжаем со старой версией.
+  async function selfUpdate() {
+    try {
+      setStatus("Проверка обновлений лаунчера…");
+      const upd = await checkLauncherUpdate();
+      if (upd) {
+        setStatus(`Обновление лаунчера до ${upd.version}…`);
+        await upd.downloadAndInstall();
+        await relaunch();
+      }
+    } catch {
+      /* нет обновления / оффлайн / dev — продолжаем */
+    }
+  }
 
   async function runCheck() {
     setPhase("checking");
