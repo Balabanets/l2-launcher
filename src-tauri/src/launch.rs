@@ -41,14 +41,42 @@ pub fn launch_game(install: &Path, manifest: &Manifest, token: Option<&str>) -> 
         cmd.env("L2_SESSION_TOKEN", t);
     }
 
-    // Важно: включаем САМУ причину ОС-ошибки в текст (anyhow по умолчанию её прячет).
-    cmd.spawn().map_err(|e| {
-        anyhow!(
+    match cmd.spawn() {
+        Ok(_) => Ok(()),
+        // os error 740 — клиент требует прав администратора (манифест requireAdministrator).
+        // CreateProcess так не умеет → перезапускаем через UAC (ShellExecute "runas").
+        Err(e) if e.raw_os_error() == Some(740) => launch_elevated(&exe, &cwd, &manifest.launch.args)
+            .with_context(|| format!("не удалось запустить с повышением прав: {}", exe.display())),
+        Err(e) => Err(anyhow!(
             "не удалось запустить {} (рабочая папка {}): {e} [код ОС: {:?}]",
             exe.display(),
             cwd.display(),
             e.raw_os_error()
-        )
-    })?;
-    Ok(())
+        )),
+    }
+}
+
+/// Запуск с повышением прав (UAC) через PowerShell Start-Process -Verb RunAs.
+/// Не блокирует: powershell стартует игру и завершается; на decline UAC игра просто не стартует.
+fn launch_elevated(exe: &Path, cwd: &Path, args: &[String]) -> Result<()> {
+    // Экранируем одинарные кавычки для PowerShell single-quoted строк.
+    let q = |s: String| s.replace('\'', "''");
+    let exe_s = q(exe.display().to_string());
+    let cwd_s = q(cwd.display().to_string());
+    let mut ps = format!(
+        "Start-Process -FilePath '{exe_s}' -WorkingDirectory '{cwd_s}' -Verb RunAs"
+    );
+    if !args.is_empty() {
+        let list = args
+            .iter()
+            .map(|a| format!("'{}'", a.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join(",");
+        ps.push_str(&format!(" -ArgumentList {list}"));
+    }
+    Command::new("powershell")
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps])
+        .spawn()
+        .map(|_| ())
+        .context("не удалось запустить powershell для повышения прав")
 }
