@@ -31,6 +31,37 @@ pub struct AppState {
     client: reqwest::Client,
     config_path: PathBuf,
     control: Arc<Control>,
+    /// Запущен ли фоновый heartbeat авторизации (чтобы не плодить задачи).
+    heartbeat: std::sync::atomic::AtomicBool,
+}
+
+/// Период переавторизации IP, пока лаунчер открыт. Держит окно авторизации живым
+/// всю игровую сессию и ловит подмену критичных файлов в рантайме.
+const HEARTBEAT_SECS: u64 = 300;
+
+/// Запустить (один раз) фоновую переавторизацию: каждые HEARTBEAT_SECS пере-хешируем
+/// критичные файлы и продлеваем авторизацию IP на бэкенде.
+fn start_heartbeat(
+    client: reqwest::Client,
+    api_base: String,
+    install: PathBuf,
+    manifest: Manifest,
+) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(HEARTBEAT_SECS)).await;
+            let install2 = install.clone();
+            let m2 = manifest.clone();
+            let hashes =
+                tokio::task::spawn_blocking(move || verify::critical_real_hashes(&install2, &m2))
+                    .await
+                    .unwrap_or_default();
+            if hashes.is_empty() {
+                continue; // файлы пропали/подменены — окно протухнет само
+            }
+            let _ = session::authorize(&client, &api_base, &manifest.version, hashes).await;
+        }
+    });
 }
 
 #[derive(Serialize)]
@@ -268,10 +299,20 @@ async fn play(state: State<'_, AppState>) -> Result<PlayResult, String> {
         return Ok(PlayResult { launched: false, bad: report.bad });
     }
 
-    // Слой 2: авторизуем IP на бэкенде (сервер aCis проверит это при логине).
+    // Слой 2: авторизуем IP на бэкенде (сервер aCis проверит это при входе в мир).
     // Результат не блокирует запуск — enforcement живёт на стороне сервера.
     let _authorized =
         session::authorize(&state.client, &cfg.api_base, &manifest.version, real_hashes).await;
+
+    // Heartbeat: пока лаунчер открыт, продлеваем авторизацию IP (и ловим подмену в рантайме).
+    if !state.heartbeat.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        start_heartbeat(
+            state.client.clone(),
+            cfg.api_base.clone(),
+            cfg.install_dir.clone(),
+            manifest.clone(),
+        );
+    }
 
     // Финальная проверка целостности НЕПОСРЕДСТВЕННО перед запуском — сужает TOCTOU-окно
     // (между этой проверкой и spawn нет сетевых задержек).
@@ -315,6 +356,7 @@ pub fn run() {
                 client: default_client(),
                 config_path,
                 control: Arc::new(Control::new()),
+                heartbeat: std::sync::atomic::AtomicBool::new(false),
             });
             Ok(())
         })
