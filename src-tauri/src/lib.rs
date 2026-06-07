@@ -7,6 +7,7 @@ pub mod launch;
 pub mod manifest;
 pub mod progress;
 pub mod scan;
+pub mod selfupdate;
 pub mod session;
 pub mod verify;
 
@@ -366,6 +367,36 @@ async fn play(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PlayR
     Ok(PlayResult { launched: true, bad: vec![] })
 }
 
+/// Проверить, есть ли новая версия лаунчера (портативное самообновление).
+/// Возвращает None, если установлена актуальная версия.
+#[tauri::command]
+async fn check_self_update(
+    state: State<'_, AppState>,
+) -> Result<Option<selfupdate::SelfUpdateInfo>, String> {
+    match selfupdate::check(&state.client).await {
+        Ok(Some(rel)) => Ok(Some(selfupdate::SelfUpdateInfo {
+            version: rel.version,
+            current: selfupdate::current_version().to_string(),
+        })),
+        Ok(None) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Скачать, проверить (SHA-256 + подпись) и заменить exe на месте, затем перезапуститься.
+#[tauri::command]
+async fn apply_self_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let rel = selfupdate::check(&state.client)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "обновление недоступно".to_string())?;
+    selfupdate::apply(&state.client, &rel, progress_cb(app.clone()))
+        .await
+        .map_err(|e| e.to_string())?;
+    // exe заменён — перезапускаемся на новую версию (не возвращается).
+    app.restart();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -401,7 +432,9 @@ pub fn run() {
             play,
             pause_tasks,
             resume_tasks,
-            cancel_tasks
+            cancel_tasks,
+            check_self_update,
+            apply_self_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

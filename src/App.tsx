@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { check as checkLauncherUpdate } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
 import {
   Play,
   ShieldCheck,
@@ -28,6 +26,7 @@ import {
   type LauncherConfig,
   type Progress,
   type ServerInfo,
+  type SelfUpdateInfo,
 } from "./lib/api";
 import { TitleBar } from "./components/TitleBar";
 import { Sigil } from "./components/Sigil";
@@ -66,6 +65,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [srv, setSrv] = useState<ServerInfo[] | null>(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  const [selfUpd, setSelfUpd] = useState<SelfUpdateInfo | null>(null);
+  const [updatingSelf, setUpdatingSelf] = useState(false);
   const unlisten = useRef<(() => void) | null>(null);
 
   // Живой тик аптайма раз в секунду.
@@ -85,7 +86,14 @@ export default function App() {
       } catch {
         /* ignore */
       }
-      await selfUpdate();
+      // Тихо проверяем обновление лаунчера: если есть — показываем кнопку,
+      // ничего не качаем и не ставим без действия игрока.
+      try {
+        const u = await api.checkSelfUpdate();
+        if (u) setSelfUpd(u);
+      } catch {
+        /* оффлайн/dev — продолжаем со старой версией */
+      }
       await runCheck();
     })();
     return () => unlisten.current?.();
@@ -108,19 +116,20 @@ export default function App() {
     };
   }, []);
 
-  // Самообновление лаунчера из GitHub-релизов (Tauri updater). Тихо игнорируем
-  // ошибки (оффлайн/dev) — тогда просто продолжаем со старой версией.
-  async function selfUpdate() {
+  // Применить обновление лаунчера по нажатию игрока: скачать → проверить
+  // (SHA-256 + подпись) → заменить exe на месте → перезапуск. Прогресс идёт
+  // через те же события update:progress. При успехе процесс перезапускается сам.
+  async function runSelfUpdate() {
+    setProgress(null);
+    setUpdatingSelf(true);
+    setPhase("updating");
+    setStatus(`Обновление лаунчера до ${selfUpd?.version ?? ""}…`);
     try {
-      setStatus("Проверка обновлений лаунчера…");
-      const upd = await checkLauncherUpdate();
-      if (upd) {
-        setStatus(`Обновление лаунчера до ${upd.version}…`);
-        await upd.downloadAndInstall();
-        await relaunch();
-      }
-    } catch {
-      /* нет обновления / оффлайн / dev — продолжаем */
+      await api.applySelfUpdate(); // не возвращается при успехе (перезапуск)
+    } catch (e) {
+      setUpdatingSelf(false);
+      setPhase("error");
+      setStatus(`Не удалось обновить лаунчер: ${e}`);
     }
   }
 
@@ -271,6 +280,19 @@ export default function App() {
         />
 
         <div className="reveal relative flex h-full flex-col items-center justify-center px-10 text-center">
+          {selfUpd && !updatingSelf && (
+            <button
+              onClick={runSelfUpdate}
+              className="group mb-5 inline-flex items-center gap-2.5 rounded-full border border-[rgba(201,164,92,0.4)] bg-[rgba(201,164,92,0.08)] px-5 py-2 text-sm text-[#e9e4d8] transition hover:bg-[rgba(201,164,92,0.16)]"
+            >
+              <Download className="size-4 text-[#c9a45c] transition group-hover:translate-y-0.5" />
+              Доступно обновление лаунчера{" "}
+              <span className="font-mono text-[#c9a45c]">{selfUpd.version}</span>
+              <span className="ml-1 rounded-md bg-[rgba(201,164,92,0.18)] px-2 py-0.5 text-[0.7rem] tracking-wide text-[#c9a45c] uppercase">
+                Обновить
+              </span>
+            </button>
+          )}
           <ServerCards servers={srv} now={now} />
 
           <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-[rgba(201,164,92,0.25)] bg-white/[0.03] px-4 py-1.5 text-[0.7rem] tracking-[0.2em] text-[rgba(201,164,92,0.9)] uppercase">

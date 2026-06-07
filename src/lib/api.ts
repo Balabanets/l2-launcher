@@ -55,6 +55,13 @@ export interface ServerInfo {
   started_at: number;
 }
 
+export interface SelfUpdateInfo {
+  /** Доступная новая версия лаунчера. */
+  version: string;
+  /** Текущая (установленная) версия. */
+  current: string;
+}
+
 export const api = {
   getConfig: () => invoke<LauncherConfig>("get_config"),
   saveConfig: (config: LauncherConfig) => invoke<void>("save_config", { config }),
@@ -67,6 +74,8 @@ export const api = {
   pause: () => invoke<void>("pause_tasks"),
   resume: () => invoke<void>("resume_tasks"),
   cancel: () => invoke<void>("cancel_tasks"),
+  checkSelfUpdate: () => invoke<SelfUpdateInfo | null>("check_self_update"),
+  applySelfUpdate: () => invoke<void>("apply_self_update"),
 };
 
 export function onProgress(cb: (p: Progress) => void): Promise<UnlistenFn> {
