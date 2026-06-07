@@ -160,6 +160,7 @@ pub struct ServerInfoOut {
     pub online: bool,
     pub players: u32,
     pub max: u32,
+    pub started_at: u64,
 }
 
 /// Живой статус всех серверов (через backend; CSP не даёт фронту ходить наружу напрямую).
@@ -187,6 +188,7 @@ async fn server_status(state: State<'_, AppState>) -> Result<Vec<ServerInfoOut>,
             online: s.get("online").and_then(|x| x.as_bool()).unwrap_or(false),
             players: s.get("players").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
             max: s.get("max").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+            started_at: s.get("startedAt").and_then(|x| x.as_u64()).unwrap_or(0),
         })
         .collect())
 }

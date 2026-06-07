@@ -14,6 +14,9 @@ import {
   Pause,
   X,
   Square,
+  Server,
+  Users,
+  Clock,
 } from "lucide-react";
 import {
   api,
@@ -21,6 +24,7 @@ import {
   fmtBytes,
   fmtSpeed,
   fmtEta,
+  fmtUptime,
   type LauncherConfig,
   type Progress,
   type ServerInfo,
@@ -61,7 +65,14 @@ export default function App() {
   const [config, setConfig] = useState<LauncherConfig | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [srv, setSrv] = useState<ServerInfo[] | null>(null);
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const unlisten = useRef<(() => void) | null>(null);
+
+  // Живой тик аптайма раз в секунду.
+  useEffect(() => {
+    const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -260,7 +271,7 @@ export default function App() {
         />
 
         <div className="reveal relative flex h-full flex-col items-center justify-center px-10 text-center">
-          <StatusPill srv={srv} />
+          <ServerCards servers={srv} now={now} />
 
           <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-[rgba(201,164,92,0.25)] bg-white/[0.03] px-4 py-1.5 text-[0.7rem] tracking-[0.2em] text-[rgba(201,164,92,0.9)] uppercase">
             Хроника Interlude · сборка {version} · Classic x1
@@ -380,33 +391,46 @@ export default function App() {
   );
 }
 
-function StatusPill({ srv }: { srv: ServerInfo[] | null }) {
-  if (!srv) {
+function ServerCards({ servers, now }: { servers: ServerInfo[] | null; now: number }) {
+  if (!servers) {
     return <div className="text-xs text-[rgba(233,228,216,0.45)]">Проверка статуса серверов…</div>;
   }
   return (
-    <div className="flex flex-wrap items-center justify-center gap-2">
-      {srv.map((s) => {
+    <div className="grid w-full max-w-lg grid-cols-2 gap-3">
+      {servers.map((s) => {
         const color = s.online ? "#34d399" : "#c9a45c";
         return (
-          <span
-            key={s.id}
-            className="inline-flex items-center gap-2 rounded-full border border-[rgba(201,164,92,0.2)] bg-white/[0.03] px-3.5 py-1.5 text-xs text-[rgba(233,228,216,0.75)]"
-          >
-            <span className="relative flex size-2">
-              {s.online && (
-                <span
-                  className="absolute inline-flex size-2 rounded-full"
-                  style={{ background: color, animation: "status-ping 1.6s cubic-bezier(0,0,0.2,1) infinite" }}
-                />
-              )}
-              <span className="relative inline-flex size-2 rounded-full" style={{ background: color }} />
-            </span>
-            <span className="font-medium text-[rgba(233,228,216,0.9)]">{s.name}</span>
-            <span className="text-[rgba(233,228,216,0.45)]">
-              {s.online ? `${s.players}${s.max ? `/${s.max}` : ""}` : "оффлайн"}
-            </span>
-          </span>
+          <div key={s.id} className="glass rounded-xl px-4 py-3 text-left">
+            <div className="flex items-center gap-2">
+              <span className="relative flex size-2">
+                {s.online && (
+                  <span
+                    className="absolute inline-flex size-2 rounded-full"
+                    style={{ background: color, animation: "status-ping 1.6s cubic-bezier(0,0,0.2,1) infinite" }}
+                  />
+                )}
+                <span className="relative inline-flex size-2 rounded-full" style={{ background: color }} />
+              </span>
+              <Server className="size-3.5 text-[#c9a45c]" />
+              <span className="truncate text-sm font-medium text-[rgba(233,228,216,0.9)]">{s.name}</span>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-xs text-[rgba(233,228,216,0.55)]">
+              <span className="flex items-center gap-1.5">
+                <Users className="size-3" /> Игроки
+              </span>
+              <span className="font-mono text-[rgba(233,228,216,0.85)]">
+                {s.online ? `${s.players}${s.max ? `/${s.max}` : ""}` : "—"}
+              </span>
+            </div>
+            <div className="mt-1 flex items-center justify-between text-xs text-[rgba(233,228,216,0.55)]">
+              <span className="flex items-center gap-1.5">
+                <Clock className="size-3" /> Аптайм
+              </span>
+              <span className="font-mono text-[rgba(233,228,216,0.85)]">
+                {s.online && s.started_at > 0 ? fmtUptime(s.started_at, now) : "—"}
+              </span>
+            </div>
+          </div>
         );
       })}
     </div>

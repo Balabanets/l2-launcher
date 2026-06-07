@@ -52,6 +52,7 @@ export interface ServerInfo {
   online: boolean;
   players: number;
   max: number;
+  started_at: number;
 }
 
 export const api = {
@@ -83,6 +84,16 @@ export function fmtBytes(n: number): string {
 
 export function fmtSpeed(bps: number): string {
   return `${fmtBytes(bps)}/с`;
+}
+
+export function fmtUptime(startedAt: number, nowSec: number): string {
+  const s = Math.max(0, nowSec - startedAt);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}д ${h}ч ${m}м`;
+  if (h > 0) return `${h}ч ${m}м`;
+  return `${m}м`;
 }
 
 export function fmtEta(secs: number): string {
