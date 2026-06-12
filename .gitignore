@@ -36,3 +36,6 @@ keys/
 *.njsproj
 *.sln
 *.sw?
+
+# payload клиента (раздаётся через master-client/manifest, не исходник лаунчера)
+/_launcher/
