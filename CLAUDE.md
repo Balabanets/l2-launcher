@@ -123,17 +123,20 @@ master-client/           ЭТАЛОННАЯ копия клиента (~7 ГБ, 
 cd ~/Документы/my-projects/l2-launcher
 # 1. Положить новый клиент в ./master-client (system/L2.exe в корне, есть _launcher/groups)
 #    Почистить состояние игрока: Cache/ Save/ system/AutoLogin*.ini s_info.ini _clip.log
-# 2. Сгенерировать подписанный манифест:
+# 2. Сгенерировать ПОДПИСАННЫЙ + СЖАТЫЙ (zstd) манифест. ВАЖНО: base_url с версией в пути
+#    (/c/<ver>/) — это immutable-путь, свежий кэш-ключ Cloudflare (без залипших 404).
+VER=$(date +%Y.%m.%d.%H%M)
 cargo run --release -p manifest-gen --bin manifest-gen -- \
   --client master-client --out dist-manifest \
-  --base-url https://l2files.balabanets.uk/client/ --layout path \
-  --version $(date +%Y.%m.%d.%H%M) --exe system/L2.exe \
+  --base-url https://l2files.balabanets.uk/c/$VER/ --layout path \
+  --version $VER --exe system/L2.exe --compress zstd \
   --key ~/.config/l2-launcher/keys/manifest.key
-cp dist-manifest/manifest.json dist-manifest/manifest.json.sig master-client/   # для l2files
+cp dist-manifest/manifest.json dist-manifest/manifest.json.sig master-client/
 # 3. Опубликовать манифест (лаунчер берёт его отсюда):
 gh release upload manifest dist-manifest/manifest.json dist-manifest/manifest.json.sig \
   --repo Balabanets/l2-client --clobber
-# nginx уже раздаёт master-client → новые файлы доступны сразу.
+# nginx уже раздаёт master-client (+ .zst рядом) → новые файлы доступны сразу.
+# .zst создаются рядом с файлами при --compress (переиспользуются по mtime). Загрузка ≈ 2.8 ГБ.
 ```
 
 ### Выпустить новую версию лаунчера
@@ -146,10 +149,21 @@ tools/publish-launcher.sh vX.Y.Z              # подписать+залить 
 
 ### Раздача (если nginx/тоннель надо пересоздать)
 ```bash
+# nginx с версионированным путём /c/<ver>/<file> → client/<file> (см. deploy/cdn.conf)
 docker run -d --name l2-cdn --restart unless-stopped -p 127.0.0.1:8091:80 \
-  -v "$PWD/master-client":/usr/share/nginx/html/client:ro nginx:alpine
-# ingress l2files.balabanets.uk → 127.0.0.1:8091 в /etc/cloudflared/lineage2.yml (через sudo)
+  -v "$PWD/master-client":/usr/share/nginx/html/client:ro \
+  -v "$PWD/deploy/cdn.conf":/etc/nginx/conf.d/default.conf:ro nginx:alpine
+# ingress l2files.balabanets.uk → 127.0.0.1:8091 в /etc/cloudflared/lineage2.yml (sudo)
+# DNS l2files должен указывать на тоннель lineage2:
+cloudflared tunnel route dns --overwrite-dns lineage2 l2files.balabanets.uk
 ```
+
+### Cloudflare (ВАЖНО: зона кэширует «Cache Everything» через legacy Page Rule)
+На зоне есть Page Rule, кэширующий всё (включая 404 → залипают). Поэтому стоит **Cache Rule**
+(новый движок, приоритет над Page Rules) для `l2files.balabanets.uk`:
+**cache 2xx (edge TTL 30д), 4xx/5xx → TTL 0 (не кэшировать)**. Это даёт CDN-оптимизацию и не
+залипает на 404. Правило ставится через CF API (Zone: Cache Rules Edit + Cache Purge).
+Версионированный путь `/c/<ver>/` дополнительно гарантирует свежесть кэша на каждый релиз.
 
 ## 8. Известные нюансы
 - Бэкап исходного архива клиента: `L2_Client_Release.zip` (~3.3 ГБ, gitignored) — держим как бэкап.
@@ -178,7 +192,13 @@ docker run -d --name l2-cdn --restart unless-stopped -p 127.0.0.1:8091:80 \
   живой дизайн + карточки/онлайн-статус серверов, прогресс проверки перед запуском.
 - **v0.4.0–0.4.1** — portable-сборка + portable self-update; настройки клиента (perf-режим,
   язык RU/EN); карточки серверов в стиле сайта.
-- **v0.4.2 (текущая)** — классовая синхронизация (`groups.rs`/`sync.rs`): optional-языки по
-  требованию, seed-once (не затирать настройки игрока), launcher-owned (perf/язык). Залит новый
-  клиент (manifest 2026.06.12.1959, 1519 файлов), раздача переведена на l2files (path),
+- **v0.4.2** — классовая синхронизация (`groups.rs`/`sync.rs`): optional-языки по требованию,
+  seed-once (не затирать настройки игрока), launcher-owned (perf/язык). Раздача на l2files (path),
   старые CAS-релизы удалены.
+- **v0.4.3 (текущая)** — UX-фиксы по фидбеку: **zstd-сжатие раздачи** (загрузка 7.1→2.8 ГБ,
+  `comp/csize` в манифесте, `.zst` рядом с файлами); **perf/язык — настройки** (мгновенно, без
+  ошибок и без мелькающих окон; применяются тихо при Играть/Обновить); **portable встаёт в
+  `%LOCALAPPDATA%` + ярлык** (`install.rs`, mslnk) — самообновление больше не ломает ярлык;
+  **иконка .exe** (арт L2 Interlude). Инфра: версионированный путь раздачи `/c/<ver>/` +
+  Cloudflare Cache Rule (cache 2xx, 4xx/5xx не кэшировать) — починен залипший 404-кэш зоны;
+  DNS l2files перенаправлен на тоннель lineage2.
