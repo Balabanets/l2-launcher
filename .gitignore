@@ -39,3 +39,7 @@ keys/
 
 # payload клиента (раздаётся через master-client/manifest, не исходник лаунчера)
 /_launcher/
+
+# Исходные архивы клиента (не исходник лаунчера)
+/L2_Client_Release.zip
+/client-staging/

@@ -182,6 +182,7 @@ mod tests {
             path: path.to_string(),
             size: bytes.len() as u64,
             sha256: l2_manifest::hash_bytes(bytes),
+            ..Default::default()
         }
     }
 

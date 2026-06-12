@@ -10,14 +10,38 @@ use std::path::{Component, Path, PathBuf};
 pub const MANIFEST_FILE: &str = "manifest.json";
 pub const SIGNATURE_FILE: &str = "manifest.json.sig";
 
+pub mod groups;
+
 /// Один файл клиента в манифесте.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileEntry {
     /// Путь относительно корня клиента, всегда через '/'.
     pub path: String,
     pub size: u64,
     /// SHA-256 в hex (нижний регистр).
     pub sha256: String,
+    /// Класс синхронизации: None = managed; иначе "optional" | "seed-once" | "launcher-owned".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
+    /// Для optional — группа ("lang-ru" / "lang-en").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+}
+
+impl FileEntry {
+    pub fn is_optional(&self) -> bool {
+        self.class.as_deref() == Some("optional")
+    }
+    pub fn is_seed_once(&self) -> bool {
+        self.class.as_deref() == Some("seed-once")
+    }
+    pub fn is_launcher_owned(&self) -> bool {
+        self.class.as_deref() == Some("launcher-owned")
+    }
+    /// managed = без класса (обычный хэш-синк).
+    pub fn is_managed(&self) -> bool {
+        self.class.is_none()
+    }
 }
 
 /// Как лаунчер запускает игру.
@@ -86,13 +110,49 @@ impl Manifest {
     }
 
     /// Список критичных файлов из манифеста.
+    /// Критичные файлы для Слоя-2: ТОЛЬКО managed по критичному паттерну.
+    /// Языковые (optional, есть не у всех), seed-once и launcher-owned — исключены,
+    /// чтобы хэш-сверка совпадала и на лаунчере, и на сервере независимо от языка.
     pub fn critical_files(&self) -> Vec<&FileEntry> {
-        self.files.iter().filter(|f| self.is_critical(&f.path)).collect()
+        self.files
+            .iter()
+            .filter(|f| f.is_managed() && self.is_critical(&f.path))
+            .collect()
     }
 
     /// Контентно-адресуемая раздача (файлы по sha256).
     pub fn is_cas(&self) -> bool {
         self.layout == "cas"
+    }
+
+    /// Активна ли языковая optional-группа файла (lang-ru всегда; lang-en — по флагу).
+    pub fn is_active_optional(&self, e: &FileEntry, en_active: bool) -> bool {
+        match e.group.as_deref() {
+            Some("lang-ru") => true,
+            Some("lang-en") => en_active,
+            _ => false,
+        }
+    }
+
+    /// Файлы хэш-синка: managed + активные языковые. seed-once/launcher-owned — отдельно.
+    pub fn sync_files(&self, en_active: bool) -> Vec<&FileEntry> {
+        self.files
+            .iter()
+            .filter(|f| f.is_managed() || (f.is_optional() && self.is_active_optional(f, en_active)))
+            .collect()
+    }
+
+    /// seed-once + launcher-owned — качаются только если отсутствуют (дефолт установки).
+    pub fn seed_files(&self) -> Vec<&FileEntry> {
+        self.files
+            .iter()
+            .filter(|f| f.is_seed_once() || f.is_launcher_owned())
+            .collect()
+    }
+
+    /// Файлы конкретной языковой группы (для докачки при смене языка).
+    pub fn lang_group_files(&self, group: &str) -> Vec<&FileEntry> {
+        self.files.iter().filter(|f| f.group.as_deref() == Some(group)).collect()
     }
 
     /// Небезопасные пути в манифесте (path traversal / абсолютные). Должно быть пусто.

@@ -88,6 +88,7 @@ fn entry(root: &Path, rel: &str) -> FileEntry {
         path: rel.to_string(),
         size: std::fs::metadata(&p).unwrap().len(),
         sha256: hash_file(&p).unwrap(),
+        ..Default::default()
     }
 }
 
@@ -194,7 +195,7 @@ async fn cas_layout_downloads_by_hash() {
         let h = l2_launcher_lib::l2_manifest::hash_bytes(bytes);
         // файл на сервере назван своим sha256
         std::fs::write(srv.join(&h), bytes).unwrap();
-        entries.push(FileEntry { path: path.to_string(), size: bytes.len() as u64, sha256: h });
+        entries.push(FileEntry { path: path.to_string(), size: bytes.len() as u64, sha256: h, ..Default::default() });
     }
     let port = serve_dir(srv.clone());
     let base_url = format!("http://127.0.0.1:{}/", port);
@@ -231,7 +232,7 @@ async fn cas_multi_falls_back_to_second_source() {
         format!("http://127.0.0.1:{}/", p1),
         format!("http://127.0.0.1:{}/", p2),
     ];
-    let entry = FileEntry { path: "system/x.dll".into(), size: bytes.len() as u64, sha256: h };
+    let entry = FileEntry { path: "system/x.dll".into(), size: bytes.len() as u64, sha256: h, ..Default::default() };
 
     let install = unique_tmp("install_multi");
     let client = default_client();
@@ -281,6 +282,7 @@ async fn rejects_corrupt_download() {
         path: "system/core.dll".into(),
         size: std::fs::metadata(srv.join("system/core.dll")).unwrap().len(),
         sha256: "0".repeat(64),
+        ..Default::default()
     };
     let install = unique_tmp("install_bad");
     let client = default_client();

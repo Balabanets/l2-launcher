@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 /// изменяемое пер-игроком состояние, а не часть дистрибутива. Их раздача либо
 /// утекает чужие данные (AutoLogin.ini хранит логин/пароль), либо вызывает ложные
 /// «требуется обновление», когда игрок сохраняет свой вход.
-const IGNORED_FILENAMES: &[&str] = &["autologin.ini"];
+const IGNORED_FILENAMES: &[&str] = &["autologin.ini", "_prep_for_upload.bat"];
 
 fn is_ignored(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
@@ -129,6 +129,9 @@ fn main() -> Result<()> {
     }
     let key = load_key(&args.key)?;
 
+    // Списки групп клиента (_launcher/groups) для классификации файлов.
+    let groups = l2_manifest::groups::GroupLists::load(&root.join("_launcher"));
+
     // 1. Собираем список файлов (исключая служебные манифесты).
     let mut paths: Vec<PathBuf> = vec![];
     for entry in walkdir::WalkDir::new(&root).follow_links(false) {
@@ -147,22 +150,34 @@ fn main() -> Result<()> {
     }
     eprintln!("Файлов к обработке: {}", paths.len());
 
-    // 2. Параллельно считаем размер + SHA-256.
+    // 2. Параллельно считаем размер + SHA-256 и классифицируем (Excluded → не в манифест).
+    use l2_manifest::groups::Class;
     let files: Vec<FileEntry> = paths
         .par_iter()
-        .map(|p| -> Result<FileEntry> {
-            let rel = p
-                .strip_prefix(&root)?
-                .to_string_lossy()
-                .replace('\\', "/");
+        .map(|p| -> Result<Option<FileEntry>> {
+            let rel = p.strip_prefix(&root)?.to_string_lossy().replace('\\', "/");
+            let (class, group) = match groups.classify(&rel) {
+                Class::Excluded => return Ok(None),
+                Class::Managed => (None, None),
+                Class::Optional(g) => (Some("optional".to_string()), Some(g)),
+                Class::SeedOnce => (Some("seed-once".to_string()), None),
+                Class::LauncherOwned => (Some("launcher-owned".to_string()), None),
+            };
             let size = std::fs::metadata(p)?.len();
             let sha256 = l2_manifest::hash_file(p)?;
-            Ok(FileEntry { path: rel, size, sha256 })
+            Ok(Some(FileEntry { path: rel, size, sha256, class, group }))
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect();
 
     let mut files = files;
     files.sort_by(|a, b| a.path.cmp(&b.path));
+    let n_opt = files.iter().filter(|f| f.is_optional()).count();
+    let n_seed = files.iter().filter(|f| f.is_seed_once()).count();
+    let n_owned = files.iter().filter(|f| f.is_launcher_owned()).count();
+    eprintln!("Классы: optional={n_opt}, seed-once={n_seed}, launcher-owned={n_owned}");
 
     let total: u64 = files.iter().map(|f| f.size).sum();
     eprintln!("Суммарный размер: {:.2} ГБ", total as f64 / 1e9);
