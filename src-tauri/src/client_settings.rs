@@ -26,26 +26,25 @@ fn perf_dir(install: &Path) -> PathBuf {
     install.join("_launcher").join("perf")
 }
 
-/// Запущена ли игра (нельзя менять файлы при открытом клиенте).
-#[cfg(windows)]
-pub fn l2_running() -> bool {
-    use std::process::Command;
-    Command::new("tasklist")
-        .args(["/FI", "IMAGENAME eq L2.exe", "/NH"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("l2.exe"))
-        .unwrap_or(false)
-}
-#[cfg(not(windows))]
-pub fn l2_running() -> bool {
-    false
-}
-
-/// Текущее состояние настроек клиента.
-pub fn read_settings(install: &Path) -> ClientSettings {
-    let performance = system_dir(install).join("d3d8.dll").is_file();
-    let language = read_language(install).unwrap_or_else(|| "ru".to_string());
-    ClientSettings { performance, language }
+/// Привести клиент к ЖЕЛАЕМЫМ настройкам (perf/язык). Best-effort и ТИХО —
+/// вызывается при запуске игры и после апдейта. Никаких окон/ошибок наружу:
+/// если payload ещё не скачан, просто логируем и пропускаем (применится позже).
+pub fn apply(install: &Path, performance: bool, language: &str) {
+    // Засеять WindowsInfo из _launcher/defaults, если его ещё нет.
+    let wi = system_dir(install).join("WindowsInfo.ini");
+    let src = install.join("_launcher").join("defaults").join("WindowsInfo.ini");
+    if !wi.exists() && src.is_file() {
+        if let Some(p) = wi.parent() {
+            std::fs::create_dir_all(p).ok();
+        }
+        std::fs::copy(&src, &wi).ok();
+    }
+    if let Err(e) = set_performance(install, performance) {
+        eprintln!("apply perf: {e}");
+    }
+    if let Err(e) = set_language(install, language) {
+        eprintln!("apply lang: {e}");
+    }
 }
 
 /// Включить/выключить режим производительности (подмена файлов целиком).
@@ -98,21 +97,6 @@ pub fn set_language(install: &Path, lang: &str) -> Result<()> {
     Ok(())
 }
 
-fn read_language(install: &Path) -> Option<String> {
-    let path = system_dir(install).join("Localization.ini");
-    let raw = std::fs::read(&path).ok()?;
-    if raw.len() <= LOCALIZATION_HEADER_LEN {
-        return None;
-    }
-    let body: Vec<u8> = raw[LOCALIZATION_HEADER_LEN..].iter().map(|b| b ^ LOCALIZATION_XOR).collect();
-    let pos = find_subslice(&body, b"Language=")?;
-    match body.get(pos + b"Language=".len()) {
-        Some(b'1') => Some("en".to_string()),
-        Some(_) => Some("ru".to_string()),
-        None => None,
-    }
-}
-
 fn copy_required(src: &Path, dst: &Path) -> Result<()> {
     if !src.is_file() {
         bail!(
@@ -136,6 +120,23 @@ fn remove_if_exists(path: &Path) -> Result<()> {
 
 fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Прочитать текущий язык из Localization.ini (только для тестов).
+#[cfg(test)]
+fn read_language(install: &Path) -> Option<String> {
+    let path = system_dir(install).join("Localization.ini");
+    let raw = std::fs::read(&path).ok()?;
+    if raw.len() <= LOCALIZATION_HEADER_LEN {
+        return None;
+    }
+    let body: Vec<u8> = raw[LOCALIZATION_HEADER_LEN..].iter().map(|b| b ^ LOCALIZATION_XOR).collect();
+    let pos = find_subslice(&body, b"Language=")?;
+    match body.get(pos + b"Language=".len()) {
+        Some(b'1') => Some("en".to_string()),
+        Some(_) => Some("ru".to_string()),
+        None => None,
+    }
 }
 
 #[cfg(test)]

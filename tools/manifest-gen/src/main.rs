@@ -42,6 +42,8 @@ struct Args {
     exe: String,
     cwd: Option<String>,
     layout: String,
+    compress: bool,
+    zstd_level: i32,
 }
 
 fn parse_args() -> Result<Args> {
@@ -54,6 +56,8 @@ fn parse_args() -> Result<Args> {
     let mut exe = "system/l2.exe".to_string();
     let mut cwd = Some("system".to_string());
     let mut layout = "path".to_string();
+    let mut compress = false;
+    let mut zstd_level = 19;
 
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -68,6 +72,8 @@ fn parse_args() -> Result<Args> {
             "--exe" => exe = val()?,
             "--cwd" => cwd = Some(val()?),
             "--layout" => layout = val()?,
+            "--compress" => compress = val()? == "zstd",
+            "--zstd-level" => zstd_level = val()?.parse().context("--zstd-level: число")?,
             "-h" | "--help" => {
                 println!("{}", include_str!("../README_USAGE.txt"));
                 std::process::exit(0);
@@ -101,7 +107,23 @@ fn parse_args() -> Result<Args> {
         exe,
         cwd,
         layout,
+        compress,
+        zstd_level,
     })
+}
+
+/// Сжать src → dst (zstd). Возвращает размер сжатого файла.
+fn compress_file(src: &Path, dst: &Path, level: i32) -> Result<u64> {
+    let mut input = std::fs::File::open(src)?;
+    let out = std::fs::File::create(dst)?;
+    let mut enc = zstd::stream::write::Encoder::new(out, level)?;
+    std::io::copy(&mut input, &mut enc)?;
+    enc.finish()?;
+    Ok(std::fs::metadata(dst)?.len())
+}
+
+fn mtime(p: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(p).and_then(|m| m.modified()).ok()
 }
 
 /// Загрузить 32 байта приватного ключа из файла (hex или base64).
@@ -141,6 +163,10 @@ fn main() -> Result<()> {
             if name == MANIFEST_FILE || name == SIGNATURE_FILE {
                 continue;
             }
+            // Сгенерированные .zst — не часть клиента (раздаются как «довесок» к оригиналам).
+            if name.ends_with(".zst") {
+                continue;
+            }
             if is_ignored(&name) {
                 eprintln!("Пропускаю (пер-игровое состояние): {}", entry.path().display());
                 continue;
@@ -152,6 +178,8 @@ fn main() -> Result<()> {
 
     // 2. Параллельно считаем размер + SHA-256 и классифицируем (Excluded → не в манифест).
     use l2_manifest::groups::Class;
+    let compress = args.compress;
+    let level = args.zstd_level;
     let files: Vec<FileEntry> = paths
         .par_iter()
         .map(|p| -> Result<Option<FileEntry>> {
@@ -165,7 +193,25 @@ fn main() -> Result<()> {
             };
             let size = std::fs::metadata(p)?.len();
             let sha256 = l2_manifest::hash_file(p)?;
-            Ok(Some(FileEntry { path: rel, size, sha256, class, group }))
+            // Сжатие: пишем <file>.zst рядом; помечаем comp только если выигрыш есть.
+            let (comp, csize) = if compress {
+                let zpath = PathBuf::from(format!("{}.zst", p.to_string_lossy()));
+                let fresh = matches!((mtime(&zpath), mtime(p)), (Some(z), Some(s)) if z >= s);
+                let cs = if fresh && zpath.exists() {
+                    std::fs::metadata(&zpath)?.len()
+                } else {
+                    compress_file(p, &zpath, level)?
+                };
+                if cs < size.saturating_sub(size / 32) {
+                    (Some("zstd".to_string()), Some(cs))
+                } else {
+                    let _ = std::fs::remove_file(&zpath); // не помогло — раздаём сырой
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
+            Ok(Some(FileEntry { path: rel, size, sha256, class, group, comp, csize }))
         })
         .collect::<Result<Vec<_>>>()?
         .into_iter()
@@ -181,6 +227,16 @@ fn main() -> Result<()> {
 
     let total: u64 = files.iter().map(|f| f.size).sum();
     eprintln!("Суммарный размер: {:.2} ГБ", total as f64 / 1e9);
+    if args.compress {
+        let dl: u64 = files.iter().map(|f| f.download_size()).sum();
+        let n_z = files.iter().filter(|f| f.is_zstd()).count();
+        eprintln!(
+            "Сжатая раздача: {:.2} ГБ ({} файлов zstd, экономия {:.0}%)",
+            dl as f64 / 1e9,
+            n_z,
+            if total > 0 { (1.0 - dl as f64 / total as f64) * 100.0 } else { 0.0 }
+        );
+    }
 
     // 3. Собираем и подписываем манифест.
     let norm = |u: &str| if u.ends_with('/') { u.to_string() } else { format!("{u}/") };

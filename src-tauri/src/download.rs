@@ -31,14 +31,16 @@ enum FileStatus {
 ///  - "cas-sharded": [bases[0] + <1-й символ sha256> + "/" + sha256]
 ///  - "cas-multi":   [base + sha256 для каждого base из bases]
 fn candidate_urls(bases: &[String], layout: &str, entry: &FileEntry) -> Vec<String> {
+    // zstd-файлы лежат рядом с оригиналом как "<url>.zst".
+    let sfx = if entry.is_zstd() { ".zst" } else { "" };
     match layout {
-        "cas" => vec![format!("{}{}", bases[0], entry.sha256)],
+        "cas" => vec![format!("{}{}{}", bases[0], entry.sha256, sfx)],
         "cas-sharded" => {
             let shard = &entry.sha256[..1];
-            vec![format!("{}{}/{}", bases[0], shard, entry.sha256)]
+            vec![format!("{}{}/{}{}", bases[0], shard, entry.sha256, sfx)]
         }
-        "cas-multi" => bases.iter().map(|b| format!("{}{}", b, entry.sha256)).collect(),
-        _ => vec![format!("{}{}", bases[0], entry.path)],
+        "cas-multi" => bases.iter().map(|b| format!("{}{}{}", b, entry.sha256, sfx)).collect(),
+        _ => vec![format!("{}{}{}", bases[0], entry.path, sfx)],
     }
 }
 
@@ -52,10 +54,18 @@ async fn download_one(
     shared: &Shared,
 ) -> Result<FileStatus> {
     let urls = candidate_urls(bases, layout, entry);
+    let compressed = entry.is_zstd();
+    let dl_size = entry.download_size(); // сжатый размер при zstd, иначе обычный
     // Защита от path traversal — пишем строго внутри install.
     let target = l2_manifest::safe_join(install, &entry.path)
         .with_context(|| format!("небезопасный путь в манифесте: {}", entry.path))?;
-    let tmp = l2_manifest::safe_join(install, &format!("{}.part", entry.path))
+    // .part — сырой файл; для zstd качаем сжатый в .zst.part, потом распаковываем.
+    let part_rel = if compressed {
+        format!("{}.zst.part", entry.path)
+    } else {
+        format!("{}.part", entry.path)
+    };
+    let tmp = l2_manifest::safe_join(install, &part_rel)
         .with_context(|| format!("небезопасный путь: {}", entry.path))?;
 
     if let Some(parent) = target.parent() {
@@ -63,12 +73,12 @@ async fn download_one(
     }
     shared.set_current(&entry.path);
 
-    // Докачка: сколько уже есть в .part
+    // Докачка: сколько уже есть в .part (в единицах того, что качаем — сжатого при zstd)
     let mut existing: u64 = match tokio::fs::metadata(&tmp).await {
         Ok(m) if m.is_file() => m.len(),
         _ => 0,
     };
-    if existing > entry.size {
+    if existing > dl_size {
         let _ = tokio::fs::remove_file(&tmp).await;
         existing = 0;
     }
@@ -130,19 +140,42 @@ async fn download_one(
     file.flush().await?;
     drop(file);
 
-    // Проверка целостности.
-    let tmp_clone = tmp.clone();
-    let actual = tokio::task::spawn_blocking(move || l2_manifest::hash_file(&tmp_clone))
-        .await?
-        .with_context(|| format!("хеш {}", entry.path))?;
-    if actual != entry.sha256 {
+    if compressed {
+        // Распаковываем .zst.part → target, затем сверяем SHA-256 ОРИГИНАЛА.
+        let tmp_c = tmp.clone();
+        let target_c = target.clone();
+        let path_for_err = entry.path.clone();
+        let sha = entry.sha256.clone();
+        let ok_hash = tokio::task::spawn_blocking(move || -> Result<bool> {
+            let inp = std::fs::File::open(&tmp_c)
+                .with_context(|| format!("открытие {}", tmp_c.display()))?;
+            let out = std::fs::File::create(&target_c)
+                .with_context(|| format!("создание {}", target_c.display()))?;
+            zstd::stream::copy_decode(inp, out)
+                .with_context(|| format!("распаковка {path_for_err}"))?;
+            Ok(l2_manifest::hash_file(&target_c)? == sha)
+        })
+        .await??;
+        if !ok_hash {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            let _ = tokio::fs::remove_file(&target).await;
+            bail!("{}: контрольная сумма не совпала после распаковки", entry.path);
+        }
         let _ = tokio::fs::remove_file(&tmp).await;
-        bail!("{}: контрольная сумма не совпала после загрузки", entry.path);
+    } else {
+        // Сырой файл: сверяем хеш и переименовываем.
+        let tmp_clone = tmp.clone();
+        let actual = tokio::task::spawn_blocking(move || l2_manifest::hash_file(&tmp_clone))
+            .await?
+            .with_context(|| format!("хеш {}", entry.path))?;
+        if actual != entry.sha256 {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            bail!("{}: контрольная сумма не совпала после загрузки", entry.path);
+        }
+        tokio::fs::rename(&tmp, &target)
+            .await
+            .with_context(|| format!("переименование {}", entry.path))?;
     }
-
-    tokio::fs::rename(&tmp, &target)
-        .await
-        .with_context(|| format!("переименование {}", entry.path))?;
     shared.inc_files();
     Ok(FileStatus::Done)
 }
@@ -158,7 +191,7 @@ pub async fn download_all(
     control: Arc<Control>,
     progress: ProgressCb,
 ) -> Result<Outcome> {
-    let total: u64 = entries.iter().map(|e| e.size).sum();
+    let total: u64 = entries.iter().map(|e| e.download_size()).sum();
     let files_total = entries.len();
     let shared = Arc::new(Shared::new(total, files_total, "download", Instant::now()));
 

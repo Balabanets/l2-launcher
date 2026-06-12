@@ -4,6 +4,7 @@ pub mod client_settings;
 pub mod config;
 pub mod control;
 pub mod download;
+pub mod install;
 pub mod launch;
 pub mod manifest;
 pub mod progress;
@@ -209,12 +210,14 @@ async fn save_config(state: State<'_, AppState>, config: LauncherConfig) -> Resu
 #[tauri::command]
 async fn check_update(state: State<'_, AppState>) -> Result<CheckResult, String> {
     let manifest = load_manifest(&state).await?;
-    let install = state.config.lock().await.install_dir.clone();
+    let cfg = state.config.lock().await.clone();
+    let install = cfg.install_dir.clone();
     let m = manifest.clone();
     let files_total = manifest.files.len();
+    let lang = cfg.language.clone();
     let (missing, mismatched, bytes, seed) = tokio::task::spawn_blocking(move || {
         // Хэш-синк только по managed + активным языковым; seed/launcher-owned — лишь отсутствующие.
-        let refs = sync::sync_refs(&m, &install);
+        let refs = sync::sync_refs(&m, &install, &lang);
         let diff = scan::scan(&install, &refs, ScanMode::Quick);
         let seed = sync::missing_seed(&m, &install);
         let seed_bytes: u64 = seed.iter().map(|f| f.size).sum();
@@ -241,8 +244,9 @@ async fn start_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Resu
     let install = cfg.install_dir.clone();
     let m = manifest.clone();
     let install_scan = install.clone();
+    let lang = cfg.language.clone();
     let to_fetch = tokio::task::spawn_blocking(move || {
-        let refs = sync::sync_refs(&m, &install_scan);
+        let refs = sync::sync_refs(&m, &install_scan, &lang);
         let mut f = scan::scan(&install_scan, &refs, ScanMode::Quick).to_fetch();
         f.extend(sync::missing_seed(&m, &install_scan)); // дописать недостающие дефолты
         f
@@ -264,9 +268,10 @@ async fn start_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Resu
         .await
         .map_err(|e| e.to_string())?;
     }
-    // Переприменить выбор игрока (perf/язык) + засеять WindowsInfo.
+    // Применить выбор игрока (perf/язык) + засеять WindowsInfo — тихо, best-effort.
     let install_re = install.clone();
-    tokio::task::spawn_blocking(move || sync::reapply(&install_re))
+    let (perf, lang2) = (cfg.performance, cfg.language.clone());
+    tokio::task::spawn_blocking(move || client_settings::apply(&install_re, perf, &lang2))
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -284,8 +289,9 @@ async fn repair(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Sca
     let install_scan = install.clone();
     let control = state.control.clone();
     let cb = progress_cb(app.clone());
+    let lang = cfg.language.clone();
     let (diff, cancelled, seed) = tokio::task::spawn_blocking(move || {
-        let refs = sync::sync_refs(&m, &install_scan);
+        let refs = sync::sync_refs(&m, &install_scan, &lang);
         let (diff, cancelled) = scan::scan_with_progress(&install_scan, &refs, ScanMode::Hash, control, cb);
         let seed = sync::missing_seed(&m, &install_scan);
         (diff, cancelled, seed)
@@ -319,7 +325,8 @@ async fn repair(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Sca
     }
     if !cancelled {
         let install_re = install.clone();
-        tokio::task::spawn_blocking(move || sync::reapply(&install_re))
+        let (perf, lang2) = (cfg.performance, cfg.language.clone());
+        tokio::task::spawn_blocking(move || client_settings::apply(&install_re, perf, &lang2))
             .await
             .map_err(|e| e.to_string())?;
     }
@@ -331,12 +338,14 @@ async fn repair(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Sca
 async fn verify_files(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<ScanSummary, String> {
     state.control.reset();
     let manifest = cached_or_load(&state).await?;
-    let install = state.config.lock().await.install_dir.clone();
+    let cfg = state.config.lock().await.clone();
+    let install = cfg.install_dir.clone();
     let m = manifest.clone();
     let control = state.control.clone();
     let cb = progress_cb(app);
+    let lang = cfg.language.clone();
     let (diff, cancelled) = tokio::task::spawn_blocking(move || {
-        let refs = sync::sync_refs(&m, &install);
+        let refs = sync::sync_refs(&m, &install, &lang);
         scan::scan_with_progress(&install, &refs, ScanMode::Hash, control, cb)
     })
     .await
@@ -386,6 +395,13 @@ async fn play(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PlayR
         );
     }
 
+    // Применить выбранные настройки клиента (perf/язык) перед запуском — тихо, best-effort.
+    let install_ap = cfg.install_dir.clone();
+    let (perf, lang_ap) = (cfg.performance, cfg.language.clone());
+    tokio::task::spawn_blocking(move || client_settings::apply(&install_ap, perf, &lang_ap))
+        .await
+        .map_err(|e| e.to_string())?;
+
     // Запуск (критичные файлы только что проверены — повторно не хешируем).
     let install = cfg.install_dir.clone();
     let m = manifest.clone();
@@ -432,69 +448,80 @@ async fn apply_self_update(app: tauri::AppHandle, state: State<'_, AppState>) ->
 async fn get_client_settings(
     state: State<'_, AppState>,
 ) -> Result<client_settings::ClientSettings, String> {
-    let install = state.config.lock().await.install_dir.clone();
-    Ok(tokio::task::spawn_blocking(move || client_settings::read_settings(&install))
-        .await
-        .map_err(|e| e.to_string())?)
+    let cfg = state.config.lock().await;
+    Ok(client_settings::ClientSettings {
+        performance: cfg.performance,
+        language: cfg.language.clone(),
+    })
 }
 
-/// Включить/выключить режим производительности (только при закрытой игре).
+/// Включить/выключить режим производительности. Это НАСТРОЙКА: пишем в конфиг
+/// мгновенно (без ошибок/окон) и тихо применяем к клиенту, если файлы уже на месте;
+/// иначе применится при следующем запуске/обновлении.
 #[tauri::command]
 async fn set_performance_mode(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
-    if client_settings::l2_running() {
-        return Err("Закройте игру перед изменением настроек клиента".into());
-    }
-    let install = state.config.lock().await.install_dir.clone();
-    tokio::task::spawn_blocking(move || client_settings::set_performance(&install, enabled))
+    let (install, lang) = {
+        let mut cfg = state.config.lock().await;
+        cfg.performance = enabled;
+        cfg.save(&state.config_path).map_err(|e| e.to_string())?;
+        (cfg.install_dir.clone(), cfg.language.clone())
+    };
+    tokio::task::spawn_blocking(move || client_settings::apply(&install, enabled, &lang))
         .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
-/// Сменить язык клиента RU/EN (только при закрытой игре). При первом выборе EN
-/// докачивает языковой набор lang-en (аддитивно; RU остаётся).
+/// Сменить язык клиента RU/EN. НАСТРОЙКА: пишем в конфиг мгновенно. Если выбран EN и
+/// пака ещё нет — докачиваем lang-en (с прогрессом). Затем тихо применяем.
 #[tauri::command]
 async fn set_client_language(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     lang: String,
 ) -> Result<(), String> {
-    if client_settings::l2_running() {
-        return Err("Закройте игру перед изменением настроек клиента".into());
-    }
-    let install = state.config.lock().await.install_dir.clone();
+    let (install, concurrency, perf) = {
+        let mut cfg = state.config.lock().await;
+        cfg.language = lang.clone();
+        cfg.save(&state.config_path).map_err(|e| e.to_string())?;
+        (cfg.install_dir.clone(), cfg.concurrency, cfg.performance)
+    };
 
-    // Перед сменой на EN убедиться, что набор шрифтов/строк на диске (иначе битые шрифты).
+    // EN: докачать языковой набор, если его ещё нет (best-effort, не блокируем выбор).
     if lang == "en" && !sync::en_downloaded(&install) {
         state.control.reset();
-        let manifest = cached_or_load(&state).await?;
-        let files: Vec<FileEntry> =
-            manifest.lang_group_files("lang-en").into_iter().cloned().collect();
-        if !files.is_empty() {
-            download::download_all(
-                &state.client,
-                &install,
-                bases_of(&manifest),
-                files,
-                state.config.lock().await.concurrency,
-                manifest.layout.clone(),
-                state.control.clone(),
-                progress_cb(app),
-            )
-            .await
-            .map_err(|e| e.to_string())?;
+        if let Ok(manifest) = cached_or_load(&state).await {
+            let files: Vec<FileEntry> =
+                manifest.lang_group_files("lang-en").into_iter().cloned().collect();
+            if !files.is_empty() {
+                let _ = download::download_all(
+                    &state.client,
+                    &install,
+                    bases_of(&manifest),
+                    files,
+                    concurrency,
+                    manifest.layout.clone(),
+                    state.control.clone(),
+                    progress_cb(app),
+                )
+                .await;
+            }
         }
     }
 
     let install2 = install.clone();
-    tokio::task::spawn_blocking(move || client_settings::set_language(&install2, &lang))
+    tokio::task::spawn_blocking(move || client_settings::apply(&install2, perf, &lang))
         .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Portable: при первом запуске встать в стабильный «дом» (%LOCALAPPDATA%) и
+    // создать ярлыки. Если уже дома — освежить ярлыки. На не-Windows — no-op.
+    install::ensure_installed();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())

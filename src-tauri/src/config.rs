@@ -17,6 +17,16 @@ pub struct LauncherConfig {
     pub server_port: u16,
     /// Сколько файлов качать параллельно.
     pub concurrency: usize,
+    /// Режим производительности (dgVoodoo). Настройка — применяется к клиенту при запуске.
+    #[serde(default)]
+    pub performance: bool,
+    /// Язык клиента: "ru" | "en". Применяется к клиенту при запуске.
+    #[serde(default = "default_language")]
+    pub language: String,
+}
+
+fn default_language() -> String {
+    "ru".to_string()
 }
 
 impl Default for LauncherConfig {
@@ -30,6 +40,8 @@ impl Default for LauncherConfig {
             server_host: "l2.balabanets.uk".to_string(),
             server_port: 2106,
             concurrency: 6,
+            performance: false,
+            language: default_language(),
         }
     }
 }

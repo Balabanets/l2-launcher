@@ -26,6 +26,12 @@ pub struct FileEntry {
     /// Для optional — группа ("lang-ru" / "lang-en").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
+    /// Сжатие при раздаче: None = сырой файл; Some("zstd") = рядом лежит `<url>.zst`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comp: Option<String>,
+    /// Размер сжатого файла (байт) — для точного прогресса. Только при comp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub csize: Option<u64>,
 }
 
 impl FileEntry {
@@ -41,6 +47,18 @@ impl FileEntry {
     /// managed = без класса (обычный хэш-синк).
     pub fn is_managed(&self) -> bool {
         self.class.is_none()
+    }
+    /// Раздаётся ли файл в zstd-сжатии (рядом лежит `<url>.zst`).
+    pub fn is_zstd(&self) -> bool {
+        self.comp.as_deref() == Some("zstd")
+    }
+    /// Сколько байт реально качается: сжатый размер при zstd, иначе обычный.
+    pub fn download_size(&self) -> u64 {
+        if self.is_zstd() {
+            self.csize.unwrap_or(self.size)
+        } else {
+            self.size
+        }
     }
 }
 

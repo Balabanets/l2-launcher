@@ -74,9 +74,16 @@ fn launch_elevated(exe: &Path, cwd: &Path, args: &[String]) -> Result<()> {
             .join(",");
         ps.push_str(&format!(" -ArgumentList {list}"));
     }
-    Command::new("powershell")
-        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps])
-        .spawn()
+    let mut cmd = Command::new("powershell");
+    cmd.args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps]);
+    // Без мелькающего консольного окна (UAC-промпт показывается отдельно ОС).
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd.spawn()
         .map(|_| ())
         .context("не удалось запустить powershell для повышения прав")
 }

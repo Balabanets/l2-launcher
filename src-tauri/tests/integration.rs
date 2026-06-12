@@ -296,3 +296,48 @@ async fn rejects_corrupt_download() {
     // битый временный файл не должен оставлять валидный результат
     assert!(!install.join("system/core.dll").exists());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn downloads_and_decompresses_zstd() {
+    use l2_launcher_lib::l2_manifest::hash_bytes;
+
+    // Компрессируемые данные + их .zst рядом (как на раздаче).
+    let srv = unique_tmp("srv_zstd");
+    let content: Vec<u8> = std::iter::repeat(*b"L2 Interlude zstd payload chunk\n")
+        .take(8192)
+        .flatten()
+        .collect();
+    write_file(&srv, "data/blob.bin", &content);
+    {
+        let inp = std::fs::File::open(srv.join("data/blob.bin")).unwrap();
+        let out = std::fs::File::create(srv.join("data/blob.bin.zst")).unwrap();
+        zstd::stream::copy_encode(inp, out, 19).unwrap();
+    }
+    let csize = std::fs::metadata(srv.join("data/blob.bin.zst")).unwrap().len();
+    assert!(csize < content.len() as u64, "тест-данные должны сжиматься");
+
+    let port = serve_dir(srv.clone());
+    let base = format!("http://127.0.0.1:{}/", port);
+
+    let entry = FileEntry {
+        path: "data/blob.bin".into(),
+        size: content.len() as u64,
+        sha256: hash_bytes(&content),
+        comp: Some("zstd".into()),
+        csize: Some(csize),
+        ..Default::default()
+    };
+    let install = unique_tmp("install_zstd");
+    let client = default_client();
+    let cb: ProgressCb = Arc::new(|_p| {});
+    download::download_all(
+        &client, &install, vec![base], vec![entry], 2, "path".into(),
+        Arc::new(Control::new()), cb,
+    )
+    .await
+    .expect("zstd-загрузка должна пройти");
+
+    // Распаковано верно (сверка идёт по SHA-256 оригинала), временный .zst.part убран.
+    assert_eq!(std::fs::read(install.join("data/blob.bin")).unwrap(), content);
+    assert!(!install.join("data/blob.bin.zst.part").exists());
+}
