@@ -1,6 +1,6 @@
 [package]
 name = "l2-launcher"
-version = "0.4.6"
+version = "0.4.7"
 description = "L2 Interlude Launcher"
 authors = ["balabanets"]
 edition.workspace = true
@@ -34,9 +34,10 @@ self-replace = "1"
 zstd = "0.13"
 sysinfo = "0.32"
 
-# Создание .lnk-ярлыков (portable «дом») — только Windows.
+# Только Windows: .lnk-ярлыки (portable «дом») + чтение HWID из реестра.
 [target.'cfg(windows)'.dependencies]
 mslnk = "0.1"
+winreg = "0.52"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

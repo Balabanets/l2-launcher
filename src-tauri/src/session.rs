@@ -34,6 +34,7 @@ struct FileHash {
 struct AuthorizeReq {
     version: String,
     nonce: String,
+    hwid: String,
     files: Vec<FileHash>,
     hmac: String,
 }
@@ -59,8 +60,29 @@ pub async fn fetch_max_clients(client: &reqwest::Client, api_base: &str, fallbac
     }
 }
 
+/// Стабильный идентификатор железа (для аппаратных банов и счёта окон по ПК).
+/// Windows: SHA-256 от MachineGuid. Dev: от machine-id/hostname.
+pub fn hwid() -> String {
+    #[cfg(windows)]
+    let raw = {
+        use winreg::enums::HKEY_LOCAL_MACHINE;
+        use winreg::RegKey;
+        RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey(r"SOFTWARE\Microsoft\Cryptography")
+            .and_then(|k| k.get_value::<String, _>("MachineGuid"))
+            .unwrap_or_default()
+    };
+    #[cfg(not(windows))]
+    let raw = std::fs::read_to_string("/etc/machine-id")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .or_else(|| std::env::var("HOSTNAME").ok())
+        .unwrap_or_else(|| "dev".into());
+    l2_manifest::hash_bytes(format!("l2hwid:{raw}").as_bytes())
+}
+
 /// Канонический payload отчёта (должен совпадать с сервером, см. reportPayload в TS).
-fn report_payload(version: &str, nonce: &str, files: &[(String, String)]) -> String {
+fn report_payload(version: &str, nonce: &str, hwid: &str, files: &[(String, String)]) -> String {
     let mut sorted = files.to_vec();
     sorted.sort_by(|a, b| a.0.cmp(&b.0)); // сортировка по кодовым точкам — как на сервере
     let body = sorted
@@ -68,7 +90,7 @@ fn report_payload(version: &str, nonce: &str, files: &[(String, String)]) -> Str
         .map(|(p, h)| format!("{p}={h}"))
         .collect::<Vec<_>>()
         .join("\n");
-    format!("{version}\n{nonce}\n{body}")
+    format!("{version}\n{nonce}\n{hwid}\n{body}")
 }
 
 fn hmac_hex(payload: &str) -> String {
@@ -85,6 +107,7 @@ pub async fn authorize(
     files: Vec<(String, String)>,
 ) -> bool {
     let base = api_base.trim_end_matches('/');
+    let hw = hwid();
 
     // 1. challenge
     let nonce = match client
@@ -102,11 +125,12 @@ pub async fn authorize(
         None => return false,
     };
 
-    // 2. HMAC + authorize
-    let hmac = hmac_hex(&report_payload(version, &nonce, &files));
+    // 2. HMAC (включает HWID — подделать «на лету» нельзя) + authorize
+    let hmac = hmac_hex(&report_payload(version, &nonce, &hw, &files));
     let req = AuthorizeReq {
         version: version.to_string(),
         nonce,
+        hwid: hw,
         files: files.into_iter().map(|(path, sha256)| FileHash { path, sha256 }).collect(),
         hmac,
     };
@@ -136,11 +160,11 @@ mod tests {
             ("system/b.exe".to_string(), "bb".to_string()),
             ("system/a.dll".to_string(), "aa".to_string()),
         ];
-        let payload = report_payload("t", "abc", &files);
-        assert_eq!(payload, "t\nabc\nsystem/a.dll=aa\nsystem/b.exe=bb");
+        let payload = report_payload("t", "abc", "HW123", &files);
+        assert_eq!(payload, "t\nabc\nHW123\nsystem/a.dll=aa\nsystem/b.exe=bb");
         assert_eq!(
             hmac_hex(&payload),
-            "0638fdfb3b14ed95622f01f9ffdc991ef7a78017069801f0d148cf6fd867979e"
+            "d40126d22984e6460c377628675ed9f931798e20e8b62d3b863d5d2e1a241cf4"
         );
     }
 }
