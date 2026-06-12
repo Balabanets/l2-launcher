@@ -159,6 +159,7 @@ export default function App() {
   async function runUpdate() {
     setProgress(null);
     setPaused(false);
+    setBad([]); // обновление — это просто загрузка: не показываем список «битых» файлов
     setPhase("updating");
     setStatus("Загрузка обновления…");
     try {
