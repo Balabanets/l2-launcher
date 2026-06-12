@@ -148,7 +148,7 @@ export default function App() {
         setStatus(`Доступно обновление · ${fmtBytes(r.bytes_to_download)}`);
       } else {
         setPhase("ready");
-        setStatus("Клиент в актуальном состоянии");
+        setStatus("Готово — можно играть");
       }
     } catch (e) {
       setPhase("error");
@@ -161,9 +161,12 @@ export default function App() {
     setPaused(false);
     setBad([]); // обновление — это просто загрузка: не показываем список «битых» файлов
     setPhase("updating");
-    setStatus("Загрузка обновления…");
+    setStatus("Загрузка и распаковка файлов…");
     try {
       await api.startUpdate();
+      // Загрузка/распаковка завершены — короткий шаг применения настроек.
+      setProgress(null);
+      setStatus("Применение настроек клиента…");
       await runCheck();
     } catch (e) {
       setPhase("error");
@@ -338,7 +341,7 @@ export default function App() {
           <div className="mb-4">
             <div className="mb-1.5 flex items-center justify-between text-[0.7rem] tracking-wide text-[rgba(233,228,216,0.55)] uppercase">
               <span>
-                {progress!.phase === "verify" ? "Проверка целостности" : "Загрузка"}
+                {progress!.phase === "verify" ? "Проверка целостности" : "Загрузка и распаковка"}
                 {paused && " · на паузе"}
               </span>
               <span>
@@ -352,7 +355,11 @@ export default function App() {
               <span className="truncate pr-3">{progress!.current || "…"}</span>
               <span className="shrink-0">
                 {fmtBytes(progress!.processed)} / {fmtBytes(progress!.total)} ·{" "}
-                {paused ? "пауза" : `${fmtSpeed(progress!.speed_bps)} · ост. ${fmtEta(progress!.eta_secs)}`}
+                {paused
+                  ? "пауза"
+                  : progress!.speed_bps > 0 && progress!.eta_secs > 0
+                    ? `${fmtSpeed(progress!.speed_bps)} · ост. ${fmtEta(progress!.eta_secs)}`
+                    : "обработка…"}
               </span>
             </div>
           </div>
