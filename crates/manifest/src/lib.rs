@@ -99,6 +99,10 @@ pub struct Manifest {
     /// glob-паттерны критичных файлов — проверяются ВСЕГДА перед запуском.
     #[serde(default)]
     pub critical: Vec<String>,
+    /// Пути для УДАЛЕНИЯ у игрока при апдейте (относительные, через '/').
+    /// Путь с '/' на конце = папка целиком (рекурсивно). Анти-traversal обязателен.
+    #[serde(default)]
+    pub delete: Vec<String>,
     pub launch: LaunchSpec,
 }
 
@@ -187,6 +191,13 @@ impl Manifest {
         if let Some(c) = &self.launch.cwd {
             if !is_safe_rel(c) {
                 bad.push(c.clone());
+            }
+        }
+        for d in &self.delete {
+            // у папок допускаем завершающий '/'
+            let probe = d.strip_suffix('/').unwrap_or(d);
+            if !is_safe_rel(probe) {
+                bad.push(d.clone());
             }
         }
         bad
@@ -290,6 +301,7 @@ mod tests {
             layout: "path".into(),
             files: vec![],
             critical: vec!["system/*.dll".into(), "system/l2.exe".into()],
+            delete: vec![],
             launch: LaunchSpec { exe: "system/l2.exe".into(), args: vec![], cwd: None },
         };
         assert!(m.is_critical("system/foo.dll"));

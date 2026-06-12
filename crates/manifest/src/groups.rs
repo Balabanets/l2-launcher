@@ -78,11 +78,9 @@ impl GroupLists {
         {
             return Class::Excluded;
         }
-        // 2. d3d8/dgVoodoo (только из perf) и system/WindowsInfo.ini (seed из _launcher/defaults).
-        if lower == "system/d3d8.dll"
-            || lower == "system/dgvoodoo.conf"
-            || lower == "system/windowsinfo.ini"
-        {
+        // 2. d3d8/dgVoodoo приходят ТОЛЬКО из perf-группы (галочка), не из базового манифеста.
+        //    (WindowsInfo.ini теперь seed-once — классифицируется по списку ниже.)
+        if lower == "system/d3d8.dll" || lower == "system/dgvoodoo.conf" {
             return Class::Excluded;
         }
         // 3. launcher-owned (l2.ini, Localization.ini).

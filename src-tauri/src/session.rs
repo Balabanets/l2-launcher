@@ -43,6 +43,22 @@ struct AuthorizeResp {
     authorized: bool,
 }
 
+/// Лимит одновременных окон с бэкенда (админ может менять). При недоступности —
+/// fallback (из конфига лаунчера). Эндпоинт: GET /api/launcher/limits → {max_clients}.
+pub async fn fetch_max_clients(client: &reqwest::Client, api_base: &str, fallback: usize) -> usize {
+    #[derive(Deserialize)]
+    struct Limits {
+        max_clients: usize,
+    }
+    let url = format!("{}/api/launcher/limits", api_base.trim_end_matches('/'));
+    match client.get(&url).timeout(std::time::Duration::from_secs(6)).send().await {
+        Ok(r) if r.status().is_success() => {
+            r.json::<Limits>().await.map(|l| l.max_clients.max(1)).unwrap_or(fallback)
+        }
+        _ => fallback,
+    }
+}
+
 /// Канонический payload отчёта (должен совпадать с сервером, см. reportPayload в TS).
 fn report_payload(version: &str, nonce: &str, files: &[(String, String)]) -> String {
     let mut sorted = files.to_vec();

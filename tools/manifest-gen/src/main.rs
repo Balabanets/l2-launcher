@@ -44,6 +44,7 @@ struct Args {
     layout: String,
     compress: bool,
     zstd_level: i32,
+    delete: Vec<String>,
 }
 
 fn parse_args() -> Result<Args> {
@@ -58,6 +59,7 @@ fn parse_args() -> Result<Args> {
     let mut layout = "path".to_string();
     let mut compress = false;
     let mut zstd_level = 19;
+    let mut delete: Vec<String> = vec![];
 
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -74,6 +76,7 @@ fn parse_args() -> Result<Args> {
             "--layout" => layout = val()?,
             "--compress" => compress = val()? == "zstd",
             "--zstd-level" => zstd_level = val()?.parse().context("--zstd-level: число")?,
+            "--delete" => delete.push(val()?.trim_start_matches('/').replace('\\', "/")),
             "-h" | "--help" => {
                 println!("{}", include_str!("../README_USAGE.txt"));
                 std::process::exit(0);
@@ -109,6 +112,7 @@ fn parse_args() -> Result<Args> {
         layout,
         compress,
         zstd_level,
+        delete,
     })
 }
 
@@ -251,6 +255,7 @@ fn main() -> Result<()> {
         layout: args.layout,
         files,
         critical: args.critical,
+        delete: args.delete,
         launch: LaunchSpec { exe: args.exe, args: vec![], cwd: args.cwd },
     };
 

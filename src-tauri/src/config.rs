@@ -23,10 +23,18 @@ pub struct LauncherConfig {
     /// Язык клиента: "ru" | "en". Применяется к клиенту при запуске.
     #[serde(default = "default_language")]
     pub language: String,
+    /// Максимум одновременных окон игры (анти-мультибокс). Дефолт 3; админ сможет
+    /// переопределить с бэкенда (/api/launcher/limits).
+    #[serde(default = "default_max_clients")]
+    pub max_clients: usize,
 }
 
 fn default_language() -> String {
     "ru".to_string()
+}
+
+fn default_max_clients() -> usize {
+    3
 }
 
 impl Default for LauncherConfig {
@@ -42,6 +50,7 @@ impl Default for LauncherConfig {
             concurrency: 6,
             performance: false,
             language: default_language(),
+            max_clients: default_max_clients(),
         }
     }
 }

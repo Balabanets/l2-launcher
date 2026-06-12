@@ -5,6 +5,22 @@ use l2_manifest::Manifest;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Сколько процессов с заданным именем exe запущено (без окна — через sysinfo).
+/// На не-Windows (dev) лимит не применяется → 0.
+#[cfg(windows)]
+pub fn running_count(exe: &str) -> usize {
+    use sysinfo::System;
+    let sys = System::new_all();
+    sys.processes()
+        .values()
+        .filter(|p| p.name().to_string_lossy().eq_ignore_ascii_case(exe))
+        .count()
+}
+#[cfg(not(windows))]
+pub fn running_count(_exe: &str) -> usize {
+    0
+}
+
 /// Нормализованный абсолютный путь из относительного (компонентами, без смешения сепараторов).
 fn resolve(install: &Path, rel: &str, what: &str) -> Result<PathBuf> {
     let joined = l2_manifest::safe_join(install, rel)

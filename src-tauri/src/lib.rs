@@ -268,6 +268,12 @@ async fn start_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Resu
         .await
         .map_err(|e| e.to_string())?;
     }
+    // Удалить устаревшие файлы (GameGuard и т.п.) согласно манифесту.
+    let install_del = install.clone();
+    let m_del = manifest.clone();
+    tokio::task::spawn_blocking(move || sync::apply_deletions(&install_del, &m_del))
+        .await
+        .map_err(|e| e.to_string())?;
     // Применить выбор игрока (perf/язык) + засеять WindowsInfo — тихо, best-effort.
     let install_re = install.clone();
     let (perf, lang2) = (cfg.performance, cfg.language.clone());
@@ -324,6 +330,11 @@ async fn repair(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Sca
         .map_err(|e| e.to_string())?;
     }
     if !cancelled {
+        let install_del = install.clone();
+        let m_del = manifest.clone();
+        tokio::task::spawn_blocking(move || sync::apply_deletions(&install_del, &m_del))
+            .await
+            .map_err(|e| e.to_string())?;
         let install_re = install.clone();
         let (perf, lang2) = (cfg.performance, cfg.language.clone());
         tokio::task::spawn_blocking(move || client_settings::apply(&install_re, perf, &lang2))
@@ -366,6 +377,18 @@ async fn play(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PlayR
     state.control.reset();
     let manifest = cached_or_load(&state).await?;
     let cfg = state.config.lock().await.clone();
+
+    // Анти-мультибокс: не запускать больше лимита окон. Лимит — с бэкенда (админ),
+    // fallback — из конфига. Подсчёт запущенных l2.exe без окна.
+    let max = session::fetch_max_clients(&state.client, &cfg.api_base, cfg.max_clients).await;
+    let running = tokio::task::spawn_blocking(|| launch::running_count("l2.exe"))
+        .await
+        .map_err(|e| e.to_string())?;
+    if running >= max {
+        return Err(format!(
+            "Открыто максимум окон ({max}). Закройте лишние клиенты, чтобы запустить ещё."
+        ));
+    }
 
     // Слой 1: проверка критичных файлов + сбор реальных хешей ЗА ОДИН проход, с прогрессом.
     let install = cfg.install_dir.clone();

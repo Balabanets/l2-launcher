@@ -124,6 +124,7 @@ async fn full_update_verify_tamper_repair() {
             entry(&srv, "textures/a.utx"),
         ],
         critical: vec!["system/*.dll".into(), "system/*.exe".into()],
+        delete: vec![],
         launch: LaunchSpec { exe: "system/l2.exe".into(), args: vec![], cwd: Some("system".into()) },
     };
 
