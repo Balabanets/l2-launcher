@@ -1,5 +1,6 @@
 //! L2 Interlude Launcher — ядро Tauri-приложения.
 
+pub mod client_settings;
 pub mod config;
 pub mod control;
 pub mod download;
@@ -397,6 +398,43 @@ async fn apply_self_update(app: tauri::AppHandle, state: State<'_, AppState>) ->
     app.restart();
 }
 
+/// Текущие настройки клиента (режим производительности + язык).
+#[tauri::command]
+async fn get_client_settings(
+    state: State<'_, AppState>,
+) -> Result<client_settings::ClientSettings, String> {
+    let install = state.config.lock().await.install_dir.clone();
+    Ok(tokio::task::spawn_blocking(move || client_settings::read_settings(&install))
+        .await
+        .map_err(|e| e.to_string())?)
+}
+
+/// Включить/выключить режим производительности (только при закрытой игре).
+#[tauri::command]
+async fn set_performance_mode(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    if client_settings::l2_running() {
+        return Err("Закройте игру перед изменением настроек клиента".into());
+    }
+    let install = state.config.lock().await.install_dir.clone();
+    tokio::task::spawn_blocking(move || client_settings::set_performance(&install, enabled))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Сменить язык клиента RU/EN (только при закрытой игре).
+#[tauri::command]
+async fn set_client_language(state: State<'_, AppState>, lang: String) -> Result<(), String> {
+    if client_settings::l2_running() {
+        return Err("Закройте игру перед изменением настроек клиента".into());
+    }
+    let install = state.config.lock().await.install_dir.clone();
+    tokio::task::spawn_blocking(move || client_settings::set_language(&install, &lang))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -434,7 +472,10 @@ pub fn run() {
             resume_tasks,
             cancel_tasks,
             check_self_update,
-            apply_self_update
+            apply_self_update,
+            get_client_settings,
+            set_performance_mode,
+            set_client_language
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

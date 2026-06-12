@@ -62,6 +62,13 @@ export interface SelfUpdateInfo {
   current: string;
 }
 
+export interface ClientSettings {
+  /** Режим производительности включён (существует system/d3d8.dll). */
+  performance: boolean;
+  /** Язык клиента: "ru" | "en". */
+  language: string;
+}
+
 export const api = {
   getConfig: () => invoke<LauncherConfig>("get_config"),
   saveConfig: (config: LauncherConfig) => invoke<void>("save_config", { config }),
@@ -76,6 +83,9 @@ export const api = {
   cancel: () => invoke<void>("cancel_tasks"),
   checkSelfUpdate: () => invoke<SelfUpdateInfo | null>("check_self_update"),
   applySelfUpdate: () => invoke<void>("apply_self_update"),
+  getClientSettings: () => invoke<ClientSettings>("get_client_settings"),
+  setPerformanceMode: (enabled: boolean) => invoke<void>("set_performance_mode", { enabled }),
+  setClientLanguage: (lang: string) => invoke<void>("set_client_language", { lang }),
 };
 
 export function onProgress(cb: (p: Progress) => void): Promise<UnlistenFn> {

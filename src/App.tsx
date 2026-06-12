@@ -15,9 +15,12 @@ import {
   Server,
   Users,
   Clock,
+  Gauge,
+  Languages,
 } from "lucide-react";
 import {
   api,
+  type ClientSettings,
   onProgress,
   fmtBytes,
   fmtSpeed,
@@ -521,6 +524,39 @@ function Settings({
   onChange: (c: LauncherConfig) => void;
   onClose: () => void;
 }) {
+  const [cs, setCs] = useState<ClientSettings | null>(null);
+  const [csBusy, setCsBusy] = useState(false);
+  const [csError, setCsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getClientSettings().then(setCs).catch(() => {});
+  }, []);
+
+  async function applyPerf(enabled: boolean) {
+    setCsBusy(true);
+    setCsError(null);
+    try {
+      await api.setPerformanceMode(enabled);
+      setCs(await api.getClientSettings());
+    } catch (e) {
+      setCsError(String(e));
+    } finally {
+      setCsBusy(false);
+    }
+  }
+  async function applyLang(lang: string) {
+    setCsBusy(true);
+    setCsError(null);
+    try {
+      await api.setClientLanguage(lang);
+      setCs(await api.getClientSettings());
+    } catch (e) {
+      setCsError(String(e));
+    } finally {
+      setCsBusy(false);
+    }
+  }
+
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="glass w-[440px] rounded-2xl p-6">
@@ -564,6 +600,60 @@ function Settings({
           }
           className="mb-2 w-24 rounded-lg border border-[rgba(201,164,92,0.2)] bg-black/30 px-3 py-2 font-mono text-sm"
         />
+
+        {/* Настройки клиента L2 */}
+        <div className="mt-5 border-t border-[rgba(201,164,92,0.15)] pt-4">
+          <div className="mb-3 text-xs tracking-wide text-[rgba(233,228,216,0.55)] uppercase">
+            Настройки клиента
+          </div>
+
+          {/* Режим производительности */}
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={cs?.performance ?? false}
+              disabled={!cs || csBusy}
+              onChange={(e) => applyPerf(e.target.checked)}
+              className="mt-1 size-4 accent-[#c9a45c]"
+            />
+            <span>
+              <span className="flex items-center gap-1.5 text-sm text-[#e9e4d8]">
+                <Gauge className="size-4 text-[#c9a45c]" /> Режим производительности
+              </span>
+              <span className="block text-xs text-[rgba(233,228,216,0.45)]">
+                dgVoodoo + увеличенный кэш. Для современных ПК; на слабых выключить.
+              </span>
+            </span>
+          </label>
+
+          {/* Язык клиента */}
+          <div className="mt-4 flex items-center gap-3">
+            <span className="flex items-center gap-1.5 text-sm text-[#e9e4d8]">
+              <Languages className="size-4 text-[#c9a45c]" /> Язык клиента
+            </span>
+            <div className="inline-flex rounded-lg border border-[rgba(201,164,92,0.2)] p-0.5">
+              {(["ru", "en"] as const).map((l) => (
+                <button
+                  key={l}
+                  disabled={!cs || csBusy}
+                  onClick={() => applyLang(l)}
+                  className={`rounded-md px-3 py-1 text-xs uppercase transition disabled:opacity-50 ${
+                    cs?.language === l
+                      ? "bg-[rgba(201,164,92,0.18)] text-[#c9a45c]"
+                      : "text-[rgba(233,228,216,0.6)]"
+                  }`}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {csError && <p className="mt-3 text-xs text-red-300">{csError}</p>}
+          <p className="mt-3 text-[0.7rem] text-[rgba(233,228,216,0.4)]">
+            Изменения применяются только при закрытой игре.
+          </p>
+        </div>
       </div>
     </div>
   );
