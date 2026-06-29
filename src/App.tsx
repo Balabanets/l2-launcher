@@ -17,6 +17,8 @@ import {
   Clock,
   Gauge,
   Languages,
+  ShieldAlert,
+  ExternalLink,
 } from "lucide-react";
 import {
   api,
@@ -30,6 +32,7 @@ import {
   type Progress,
   type ServerInfo,
   type SelfUpdateInfo,
+  type SacState,
 } from "./lib/api";
 import { TitleBar } from "./components/TitleBar";
 import { Sigil } from "./components/Sigil";
@@ -70,6 +73,7 @@ export default function App() {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [selfUpd, setSelfUpd] = useState<SelfUpdateInfo | null>(null);
   const [updatingSelf, setUpdatingSelf] = useState(false);
+  const [sac, setSac] = useState<SacState>("off");
   const unlisten = useRef<(() => void) | null>(null);
 
   // Живой тик аптайма раз в секунду.
@@ -96,6 +100,13 @@ export default function App() {
         if (u) setSelfUpd(u);
       } catch {
         /* оффлайн/dev — продолжаем со старой версией */
+      }
+      // Smart App Control (Windows 11): если включён — он заблокирует запуск игры.
+      // Показываем гид по выключению, играть не даём, пока не выключат.
+      try {
+        setSac(await api.sacStatus());
+      } catch {
+        /* не Windows / нет данных — считаем выключенным */
       }
       await runCheck();
     })();
@@ -133,6 +144,24 @@ export default function App() {
       setUpdatingSelf(false);
       setPhase("error");
       setStatus(`Не удалось обновить лаунчер: ${e}`);
+    }
+  }
+
+  // Открыть «Безопасность Windows» на странице с переключателем Smart App Control.
+  async function openSac() {
+    try {
+      await api.openSacSettings();
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  // Перепроверить состояние SAC (после того как игрок выключил его в настройках).
+  async function recheckSac() {
+    try {
+      setSac(await api.sacStatus());
+    } catch {
+      /* ignore */
     }
   }
 
@@ -332,6 +361,41 @@ export default function App() {
               </ul>
             </div>
           )}
+
+          {sac === "on" && (
+            <div className="mt-6 max-w-lg rounded-xl border border-amber-500/40 bg-amber-500/[0.07] px-5 py-4 text-left text-amber-100/90">
+              <div className="mb-2 flex items-center gap-2 font-medium text-amber-300">
+                <ShieldAlert className="size-4" /> Smart App Control блокирует запуск игры
+              </div>
+              <p className="text-xs leading-relaxed text-amber-100/75">
+                Это защита Windows 11 против неподписанных программ. Её нельзя обойти
+                исключениями — нужно выключить вручную (для игрового ПК это нормально):
+              </p>
+              <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-xs text-amber-100/80">
+                <li>Откройте «Безопасность Windows» (кнопка ниже).</li>
+                <li>«Управление приложениями и браузером» → «Параметры Smart App Control».</li>
+                <li>Переключите в «Выкл», подтвердите.</li>
+                <li>Вернитесь и нажмите «Проверить снова».</li>
+              </ol>
+              <p className="mt-2 text-[0.7rem] text-amber-200/55">
+                Внимание: выключение необратимо (обратно — только переустановкой Windows).
+              </p>
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={openSac}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-xs text-amber-100 transition hover:bg-amber-400/20"
+                >
+                  <ExternalLink className="size-3.5" /> Открыть настройки Windows
+                </button>
+                <button
+                  onClick={recheckSac}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/20 px-3 py-1.5 text-xs text-amber-100/80 transition hover:bg-amber-400/10"
+                >
+                  <RefreshCw className="size-3.5" /> Проверить снова
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -390,7 +454,15 @@ export default function App() {
                   <SettingsIcon className="size-4" />
                 </IconBtn>
 
-                {phase === "outdated" ? (
+                {sac === "on" ? (
+                  <PrimaryBtn onClick={openSac} disabled={busy}>
+                    <ShieldAlert className="size-4" /> Выключить Smart App Control
+                  </PrimaryBtn>
+                ) : selfUpd && !updatingSelf ? (
+                  <PrimaryBtn onClick={runSelfUpdate} disabled={busy}>
+                    <Download className="size-4" /> Обновить лаунчер · {selfUpd.version}
+                  </PrimaryBtn>
+                ) : phase === "outdated" ? (
                   <PrimaryBtn onClick={runUpdate} disabled={busy}>
                     <Download className="size-4" /> Обновить · {fmtBytes(bytesNeeded)}
                   </PrimaryBtn>

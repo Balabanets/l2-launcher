@@ -9,6 +9,7 @@ pub mod install;
 pub mod launch;
 pub mod manifest;
 pub mod progress;
+pub mod sac;
 pub mod scan;
 pub mod selfupdate;
 pub mod session;
@@ -405,6 +406,31 @@ async fn verify_files(app: tauri::AppHandle, state: State<'_, AppState>) -> Resu
 #[tauri::command]
 async fn play(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PlayResult, String> {
     state.control.reset();
+
+    // Обязательное обновление лаунчера: если доступна новая версия — игру не запускаем.
+    // Новый клиент/протокол/правила могут требовать свежий лаунчер, поэтому запуск
+    // блокируется до самообновления. Проверка живая (на момент нажатия «Играть»), её
+    // нельзя обойти из фронта. Fail-open: если проверить не удалось (оффлайн/ошибка) —
+    // не блокируем, чтобы сетевой сбой не лишал игры.
+    if let Ok(Some(rel)) = selfupdate::check(&state.client).await {
+        return Err(format!(
+            "Сначала обновите лаунчер до версии {}. Запуск игры заблокирован до обновления лаунчера.",
+            rel.version
+        ));
+    }
+
+    // Smart App Control (Windows 11) принудительно блокирует неподписанный L2.exe и
+    // его DLL на этапе загрузки. Исключения/подпись здесь не помогают — даём понятную
+    // ошибку (фронт показывает гид по выключению SAC) вместо криптового системного окна.
+    if sac::is_blocking(sac::state()) {
+        return Err(
+            "Smart App Control блокирует запуск игры. Откройте «Безопасность Windows» → \
+             «Управление приложениями и браузером» → Smart App Control и выключите его, \
+             затем нажмите «Играть» снова."
+                .to_string(),
+        );
+    }
+
     let manifest = cached_or_load(&state).await?;
     let cfg = state.config.lock().await.clone();
 
@@ -464,6 +490,18 @@ async fn play(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PlayR
         .map_err(|e| e.to_string())?;
 
     Ok(PlayResult { launched: true, bad: vec![] })
+}
+
+/// Состояние Smart App Control: "off" | "on" | "evaluation" | "unknown".
+#[tauri::command]
+fn sac_status() -> sac::SacState {
+    sac::state()
+}
+
+/// Открыть страницу настроек Windows с переключателем Smart App Control.
+#[tauri::command]
+fn open_sac_settings() -> Result<(), String> {
+    sac::open_settings().map_err(|e| e.to_string())
 }
 
 /// Проверить, есть ли новая версия лаунчера (портативное самообновление).
@@ -611,6 +649,8 @@ pub fn run() {
             cancel_tasks,
             check_self_update,
             apply_self_update,
+            sac_status,
+            open_sac_settings,
             get_client_settings,
             set_performance_mode,
             set_client_language
