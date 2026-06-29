@@ -688,12 +688,32 @@ function Settings({
     }
   }
 
+  const sacDetail =
+    sacState === "off"
+      ? "Выключен — не мешает запуску"
+      : sacState === "on"
+        ? "Включён — блокирует игру"
+        : sacState === "evaluation"
+          ? "Режим оценки"
+          : "Состояние неизвестно";
+  const sacLevel: HealthLevel =
+    sacState === "off"
+      ? "ok"
+      : sacState === "on"
+        ? "err"
+        : sacState === "evaluation"
+          ? "warn"
+          : "idle";
+
   return (
     <div
-      className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm"
       onClick={onClose}
     >
-      <div className="glass w-[440px] rounded-2xl p-6" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="glass max-h-full w-[760px] overflow-y-auto rounded-2xl p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="mb-5 flex items-center justify-between">
           <h2 className="font-heading text-xl">Настройки</h2>
           <button
@@ -704,161 +724,147 @@ function Settings({
           </button>
         </div>
 
-        <label className="mb-1 block text-xs tracking-wide text-[rgba(233,228,216,0.55)] uppercase">
-          Папка установки
-        </label>
-        <div className="mb-4 flex gap-2">
-          <input
-            readOnly
-            value={config.install_dir}
-            className="flex-1 truncate rounded-lg border border-[rgba(201,164,92,0.2)] bg-black/30 px-3 py-2 font-mono text-xs text-[rgba(233,228,216,0.8)]"
-          />
-          <button
-            onClick={onPickDir}
-            className="grid size-9 place-items-center rounded-lg border border-[rgba(201,164,92,0.25)] hover:text-[#c9a45c]"
-          >
-            <FolderOpen className="size-4" />
-          </button>
-        </div>
-
-        <label className="mb-1 block text-xs tracking-wide text-[rgba(233,228,216,0.55)] uppercase">
-          Параллельных загрузок
-        </label>
-        <input
-          type="number"
-          min={1}
-          max={16}
-          value={config.concurrency}
-          onChange={(e) =>
-            onChange({ ...config, concurrency: Math.max(1, Math.min(16, +e.target.value)) })
-          }
-          className="mb-2 w-24 rounded-lg border border-[rgba(201,164,92,0.2)] bg-black/30 px-3 py-2 font-mono text-sm"
-        />
-
-        {/* Настройки клиента L2 */}
-        <div className="mt-5 border-t border-[rgba(201,164,92,0.15)] pt-4">
-          <div className="mb-3 text-xs tracking-wide text-[rgba(233,228,216,0.55)] uppercase">
-            Настройки клиента
-          </div>
-
-          {/* Режим производительности */}
-          <label className="flex items-start gap-3">
-            <input
-              type="checkbox"
-              checked={cs?.performance ?? false}
-              disabled={!cs || csBusy}
-              onChange={(e) => applyPerf(e.target.checked)}
-              className="mt-1 size-4 accent-[#c9a45c]"
-            />
-            <span>
-              <span className="flex items-center gap-1.5 text-sm text-[#e9e4d8]">
-                <Gauge className="size-4 text-[#c9a45c]" /> Режим производительности
-              </span>
-              <span className="block text-xs text-[rgba(233,228,216,0.45)]">
-                dgVoodoo + увеличенный кэш. Для современных ПК; на слабых выключить.
-              </span>
-            </span>
-          </label>
-
-          {/* Язык клиента */}
-          <div className="mt-4 flex items-center gap-3">
-            <span className="flex items-center gap-1.5 text-sm text-[#e9e4d8]">
-              <Languages className="size-4 text-[#c9a45c]" /> Язык клиента
-            </span>
-            <div className="inline-flex rounded-lg border border-[rgba(201,164,92,0.2)] p-0.5">
-              {(["ru", "en"] as const).map((l) => (
-                <button
-                  key={l}
-                  disabled={!cs || csBusy}
-                  onClick={() => applyLang(l)}
-                  className={`rounded-md px-3 py-1 text-xs uppercase transition disabled:opacity-50 ${
-                    cs?.language === l
-                      ? "bg-[rgba(201,164,92,0.18)] text-[#c9a45c]"
-                      : "text-[rgba(233,228,216,0.6)]"
-                  }`}
-                >
-                  {l}
-                </button>
-              ))}
+        <div className="grid grid-cols-2 gap-7">
+          {/* Левая колонка: установка + клиент */}
+          <div>
+            <label className="mb-1 block text-xs tracking-wide text-[rgba(233,228,216,0.55)] uppercase">
+              Папка установки
+            </label>
+            <div className="mb-4 flex gap-2">
+              <input
+                readOnly
+                value={config.install_dir}
+                className="flex-1 truncate rounded-lg border border-[rgba(201,164,92,0.2)] bg-black/30 px-3 py-2 font-mono text-xs text-[rgba(233,228,216,0.8)]"
+              />
+              <button
+                onClick={onPickDir}
+                className="grid size-9 shrink-0 place-items-center rounded-lg border border-[rgba(201,164,92,0.25)] hover:text-[#c9a45c]"
+              >
+                <FolderOpen className="size-4" />
+              </button>
             </div>
+
+            <label className="mb-1 block text-xs tracking-wide text-[rgba(233,228,216,0.55)] uppercase">
+              Параллельных загрузок
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={16}
+              value={config.concurrency}
+              onChange={(e) =>
+                onChange({ ...config, concurrency: Math.max(1, Math.min(16, +e.target.value)) })
+              }
+              className="w-24 rounded-lg border border-[rgba(201,164,92,0.2)] bg-black/30 px-3 py-2 font-mono text-sm"
+            />
+
+            <div className="mt-5 mb-3 text-xs tracking-wide text-[rgba(233,228,216,0.55)] uppercase">
+              Настройки клиента
+            </div>
+
+            {/* Режим производительности */}
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                checked={cs?.performance ?? false}
+                disabled={!cs || csBusy}
+                onChange={(e) => applyPerf(e.target.checked)}
+                className="mt-1 size-4 accent-[#c9a45c]"
+              />
+              <span>
+                <span className="flex items-center gap-1.5 text-sm text-[#e9e4d8]">
+                  <Gauge className="size-4 text-[#c9a45c]" /> Режим производительности
+                </span>
+                <span className="block text-xs text-[rgba(233,228,216,0.45)]">
+                  dgVoodoo + увеличенный кэш. Для современных ПК; на слабых выключить.
+                </span>
+              </span>
+            </label>
+
+            {/* Язык клиента */}
+            <div className="mt-4 flex items-center gap-3">
+              <span className="flex items-center gap-1.5 text-sm text-[#e9e4d8]">
+                <Languages className="size-4 text-[#c9a45c]" /> Язык клиента
+              </span>
+              <div className="inline-flex rounded-lg border border-[rgba(201,164,92,0.2)] p-0.5">
+                {(["ru", "en"] as const).map((l) => (
+                  <button
+                    key={l}
+                    disabled={!cs || csBusy}
+                    onClick={() => applyLang(l)}
+                    className={`rounded-md px-3 py-1 text-xs uppercase transition disabled:opacity-50 ${
+                      cs?.language === l
+                        ? "bg-[rgba(201,164,92,0.18)] text-[#c9a45c]"
+                        : "text-[rgba(233,228,216,0.6)]"
+                    }`}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {csError && <p className="mt-3 text-xs text-red-300">{csError}</p>}
+            <p className="mt-3 text-[0.7rem] text-[rgba(233,228,216,0.4)]">
+              Изменения применяются только при закрытой игре.
+            </p>
           </div>
 
-          {csError && <p className="mt-3 text-xs text-red-300">{csError}</p>}
-          <p className="mt-3 text-[0.7rem] text-[rgba(233,228,216,0.4)]">
-            Изменения применяются только при закрытой игре.
-          </p>
-        </div>
+          {/* Правая колонка: защита и версии */}
+          <div className="border-l border-[rgba(201,164,92,0.12)] pl-7">
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-xs tracking-wide text-[rgba(233,228,216,0.55)] uppercase">
+                Защита и версии
+              </span>
+              <button
+                onClick={loadDiag}
+                title="Обновить"
+                className="grid size-7 place-items-center rounded-md text-[rgba(233,228,216,0.5)] hover:text-[#c9a45c]"
+              >
+                <RefreshCw className={`size-3.5 ${diagLoading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
 
-        {/* Защита и версии */}
-        <div className="mt-5 border-t border-[rgba(201,164,92,0.15)] pt-4">
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-xs tracking-wide text-[rgba(233,228,216,0.55)] uppercase">
-              Защита и версии
-            </span>
-            <button
-              onClick={loadDiag}
-              title="Обновить"
-              className="grid size-7 place-items-center rounded-md text-[rgba(233,228,216,0.5)] hover:text-[#c9a45c]"
-            >
-              <RefreshCw className={`size-3.5 ${diagLoading ? "animate-spin" : ""}`} />
-            </button>
-          </div>
-
-          <div className="space-y-1.5">
-            <StatusRow
-              icon={<Download className="size-4" />}
-              label="Лаунчер"
-              detail={
-                selfUpd
-                  ? `Доступно обновление ${selfUpd.version}`
-                  : `Актуален · ${diag?.launcher_version ?? "—"}`
-              }
-              level={selfUpd ? "warn" : "ok"}
-              action={selfUpd ? { label: "Обновить", onClick: onSelfUpdate } : undefined}
-            />
-            <StatusRow
-              icon={<ShieldCheck className="size-4" />}
-              label="Подпись клиента"
-              detail={
-                diag?.manifest_signature_ok === true
-                  ? "Ed25519 — валидна"
-                  : "Не удалось проверить (оффлайн?)"
-              }
-              level={diag?.manifest_signature_ok === true ? "ok" : "warn"}
-            />
-            <StatusRow
-              icon={<ShieldAlert className="size-4" />}
-              label="Smart App Control"
-              detail={
-                sacState === "off"
-                  ? "Выключен — не мешает запуску"
-                  : sacState === "on"
-                    ? "Включён — блокирует игру"
-                    : sacState === "evaluation"
-                      ? "Режим оценки"
-                      : "Состояние неизвестно"
-              }
-              level={
-                sacState === "off"
-                  ? "ok"
-                  : sacState === "on"
-                    ? "err"
-                    : sacState === "evaluation"
-                      ? "warn"
-                      : "idle"
-              }
-              action={sacState === "on" ? { label: "Выключить", onClick: onOpenSac } : undefined}
-            />
-            <StatusRow
-              icon={<ShieldCheck className="size-4" />}
-              label="Антивирус (Defender)"
-              detail={
-                diag?.defender_excluded
-                  ? "Папка игры в исключениях"
-                  : "Исключение добавится при обновлении"
-              }
-              level={diag?.defender_excluded ? "ok" : "warn"}
-            />
+            <div className="space-y-1.5">
+              <StatusRow
+                icon={<Download className="size-4" />}
+                label="Лаунчер"
+                detail={
+                  selfUpd
+                    ? `Доступно обновление ${selfUpd.version}`
+                    : `Актуален · ${diag?.launcher_version ?? "—"}`
+                }
+                level={selfUpd ? "warn" : "ok"}
+                action={selfUpd ? { label: "Обновить", onClick: onSelfUpdate } : undefined}
+              />
+              <StatusRow
+                icon={<ShieldCheck className="size-4" />}
+                label="Подпись клиента"
+                detail={
+                  diag?.manifest_signature_ok === true
+                    ? "Ed25519 — валидна"
+                    : "Не удалось проверить (оффлайн?)"
+                }
+                level={diag?.manifest_signature_ok === true ? "ok" : "warn"}
+              />
+              <StatusRow
+                icon={<ShieldAlert className="size-4" />}
+                label="Smart App Control"
+                detail={sacDetail}
+                level={sacLevel}
+                action={sacState === "on" ? { label: "Выключить", onClick: onOpenSac } : undefined}
+              />
+              <StatusRow
+                icon={<ShieldCheck className="size-4" />}
+                label="Антивирус (Defender)"
+                detail={
+                  diag?.defender_excluded
+                    ? "Папка игры в исключениях"
+                    : "Исключение добавится при обновлении"
+                }
+                level={diag?.defender_excluded ? "ok" : "warn"}
+              />
+            </div>
           </div>
         </div>
       </div>
