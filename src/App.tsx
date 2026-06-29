@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Play,
   ShieldCheck,
@@ -19,6 +20,10 @@ import {
   Languages,
   ShieldAlert,
   ExternalLink,
+  LogIn,
+  LogOut,
+  Bug,
+  UserPlus,
 } from "lucide-react";
 import {
   api,
@@ -34,10 +39,14 @@ import {
   type SelfUpdateInfo,
   type SacState,
   type Diagnostics,
+  type LauncherUser,
 } from "./lib/api";
 import { TitleBar } from "./components/TitleBar";
 import { Sigil } from "./components/Sigil";
 import { Ambient } from "./components/Ambient";
+import { BugReport } from "./components/BugReport";
+import { GameAccountModal } from "./components/GameAccount";
+import { LoginPrompt } from "./components/LoginPrompt";
 
 type Phase =
   | "checking"
@@ -75,7 +84,14 @@ export default function App() {
   const [selfUpd, setSelfUpd] = useState<SelfUpdateInfo | null>(null);
   const [updatingSelf, setUpdatingSelf] = useState(false);
   const [sac, setSac] = useState<SacState>("off");
+  const [me, setMe] = useState<LauncherUser | null>(null);
+  const [authState, setAuthState] = useState<"idle" | "waiting">("idle");
+  const [authCode, setAuthCode] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [showBug, setShowBug] = useState(false);
+  const [showGameAcc, setShowGameAcc] = useState(false);
   const unlisten = useRef<(() => void) | null>(null);
+  const loginAbort = useRef(false);
 
   // Живой тик аптайма раз в секунду.
   useEffect(() => {
@@ -108,6 +124,12 @@ export default function App() {
         setSac(await api.sacStatus());
       } catch {
         /* не Windows / нет данных — считаем выключенным */
+      }
+      // Кто вошёл (по сохранённому токену).
+      try {
+        setMe(await api.authMe());
+      } catch {
+        /* не вошёл / оффлайн */
       }
       await runCheck();
     })();
@@ -150,6 +172,57 @@ export default function App() {
       clearInterval(id);
     };
   }, []);
+
+  // Вход через сайт (OAuth, device-code): открыть браузер и опрашивать подтверждение.
+  async function startLogin() {
+    setAuthError(null);
+    setAuthState("waiting");
+    loginAbort.current = false;
+    try {
+      const b = await api.authBegin();
+      setAuthCode(b.code);
+      await openUrl(b.verify_url);
+      const deadline = Date.now() + Math.min(b.expires_in, 600) * 1000;
+      while (Date.now() < deadline && !loginAbort.current) {
+        await new Promise((r) => setTimeout(r, 2500));
+        if (loginAbort.current) break;
+        let res;
+        try {
+          res = await api.authPoll(b.secret);
+        } catch {
+          continue;
+        }
+        if (res.status === "approved") {
+          setMe(await api.authMe());
+          setAuthState("idle");
+          setAuthCode(null);
+          return;
+        }
+        if (res.status === "expired") break;
+      }
+      if (!loginAbort.current) setAuthError("Время вышло. Войдите снова.");
+    } catch (e) {
+      setAuthError(String(e));
+    } finally {
+      setAuthState("idle");
+      setAuthCode(null);
+    }
+  }
+
+  function cancelLogin() {
+    loginAbort.current = true;
+    setAuthState("idle");
+    setAuthCode(null);
+  }
+
+  async function logout() {
+    try {
+      await api.authLogout();
+    } catch {
+      /* ignore */
+    }
+    setMe(null);
+  }
 
   // Применить обновление лаунчера по нажатию игрока: скачать → проверить
   // (SHA-256 + подпись) → заменить exe на месте → перезапуск. Прогресс идёт
@@ -454,6 +527,19 @@ export default function App() {
           <div className="flex items-center gap-3 text-sm">
             <StatusIcon phase={phase} paused={paused} />
             <span className="text-[rgba(233,228,216,0.8)]">{status}</span>
+            {me && (
+              <span className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-[rgba(201,164,92,0.25)] bg-white/[0.03] px-2.5 py-1 text-xs text-[rgba(233,228,216,0.75)]">
+                {me.name ?? me.email ?? "Игрок"}
+                <button
+                  onClick={logout}
+                  title="Выйти"
+                  className="text-[rgba(233,228,216,0.5)] transition hover:text-[#c9a45c]"
+                >
+                  <LogOut className="size-3.5" />
+                </button>
+              </span>
+            )}
+            {authError && <span className="text-xs text-red-300">{authError}</span>}
           </div>
 
           <div className="flex items-center gap-2">
@@ -468,6 +554,16 @@ export default function App() {
               </>
             ) : (
               <>
+                {me && (
+                  <>
+                    <IconBtn title="Игровой аккаунт" onClick={() => setShowGameAcc(true)} disabled={busy}>
+                      <UserPlus className="size-4" />
+                    </IconBtn>
+                    <IconBtn title="Сообщить о проблеме" onClick={() => setShowBug(true)} disabled={busy}>
+                      <Bug className="size-4" />
+                    </IconBtn>
+                  </>
+                )}
                 <IconBtn title="Проверить файлы" onClick={runVerify} disabled={busy}>
                   <ShieldCheck className="size-4" />
                 </IconBtn>
@@ -482,6 +578,11 @@ export default function App() {
                 ) : selfUpd && !updatingSelf ? (
                   <PrimaryBtn onClick={runSelfUpdate} disabled={busy}>
                     <Download className="size-4" /> Обновить лаунчер · {selfUpd.version}
+                  </PrimaryBtn>
+                ) : !me ? (
+                  <PrimaryBtn onClick={startLogin} disabled={busy || authState === "waiting"}>
+                    <LogIn className="size-4" />{" "}
+                    {authState === "waiting" ? "Подтвердите в браузере…" : "Войти, чтобы играть"}
                   </PrimaryBtn>
                 ) : phase === "outdated" ? (
                   <PrimaryBtn onClick={runUpdate} disabled={busy}>
@@ -520,6 +621,14 @@ export default function App() {
           onOpenSac={openSac}
         />
       )}
+
+      {authState === "waiting" && authCode && (
+        <LoginPrompt code={authCode} onCancel={cancelLogin} />
+      )}
+
+      {showGameAcc && <GameAccountModal onClose={() => setShowGameAcc(false)} />}
+
+      {showBug && <BugReport onClose={() => setShowBug(false)} />}
     </div>
   );
 }

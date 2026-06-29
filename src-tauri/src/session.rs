@@ -105,6 +105,7 @@ pub async fn authorize(
     api_base: &str,
     version: &str,
     files: Vec<(String, String)>,
+    token: Option<&str>,
 ) -> bool {
     let base = api_base.trim_end_matches('/');
     let hw = hwid();
@@ -134,13 +135,16 @@ pub async fn authorize(
         files: files.into_iter().map(|(path, sha256)| FileHash { path, sha256 }).collect(),
         hmac,
     };
-    match client
+    let mut rb = client
         .post(format!("{base}/api/launcher/authorize"))
         .json(&req)
-        .timeout(std::time::Duration::from_secs(12))
-        .send()
-        .await
-    {
+        .timeout(std::time::Duration::from_secs(12));
+    // Токен сессии лаунчера: при включённом на сервере LAUNCHER_REQUIRE_LOGIN
+    // авторизация IP пройдёт только для вошедшего игрока (зубы гейта входа).
+    if let Some(t) = token {
+        rb = rb.bearer_auth(t);
+    }
+    match rb.send().await {
         Ok(r) if r.status().is_success() => {
             r.json::<AuthorizeResp>().await.map(|a| a.authorized).unwrap_or(false)
         }

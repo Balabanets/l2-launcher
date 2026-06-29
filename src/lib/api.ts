@@ -72,6 +72,37 @@ export interface ClientSettings {
 /** Состояние Smart App Control (Windows 11). */
 export type SacState = "off" | "on" | "evaluation" | "unknown";
 
+/** Игрок, вошедший в лаунчер (OAuth сайта). */
+export interface LauncherUser {
+  id: string;
+  name: string | null;
+  email: string | null;
+  image: string | null;
+}
+
+/** Начало OAuth-входа: код + URL подтверждения + приватный секрет поллинга. */
+export interface BeginAuth {
+  code: string;
+  secret: string;
+  verify_url: string;
+  expires_in: number;
+}
+
+export interface PollResult {
+  status: "pending" | "approved" | "expired";
+  token?: string | null;
+}
+
+export interface GameAccount {
+  login: string;
+}
+
+export interface ReportResult {
+  ticket_id: number;
+  attached: number;
+  rejected: number;
+}
+
 /** Сводка состояния защиты и целостности для панели «Состояние». */
 export interface Diagnostics {
   launcher_version: string;
@@ -101,6 +132,20 @@ export const api = {
   sacStatus: () => invoke<SacState>("sac_status"),
   openSacSettings: () => invoke<void>("open_sac_settings"),
   diagnostics: () => invoke<Diagnostics>("diagnostics"),
+  authBegin: () => invoke<BeginAuth>("auth_begin"),
+  authPoll: (secret: string) => invoke<PollResult>("auth_poll", { secret }),
+  authLogout: () => invoke<void>("auth_logout"),
+  authMe: () => invoke<LauncherUser | null>("auth_me"),
+  listGameAccounts: () => invoke<GameAccount[]>("list_game_accounts"),
+  createGameAccount: (login: string, password: string) =>
+    invoke<string>("create_game_account", { login, password }),
+  submitBugReport: (
+    category: string,
+    subcategory: string,
+    title: string,
+    description: string,
+    files: string[],
+  ) => invoke<ReportResult>("submit_bug_report", { category, subcategory, title, description, files }),
   getClientSettings: () => invoke<ClientSettings>("get_client_settings"),
   setPerformanceMode: (enabled: boolean) => invoke<void>("set_performance_mode", { enabled }),
   setClientLanguage: (lang: string) => invoke<void>("set_client_language", { lang }),

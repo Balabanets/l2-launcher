@@ -1,5 +1,6 @@
 //! L2 Interlude Launcher — ядро Tauri-приложения.
 
+pub mod auth;
 pub mod client_settings;
 pub mod config;
 pub mod control;
@@ -39,6 +40,11 @@ pub struct AppState {
     control: Arc<Control>,
     /// Запущен ли фоновый heartbeat авторизации (чтобы не плодить задачи).
     heartbeat: std::sync::atomic::AtomicBool,
+    /// Токен сессии лаунчера (OAuth-вход игрока). None = не вошёл. Arc — чтобы фоновый
+    /// heartbeat читал актуальный токен и прекращал авторизацию IP после выхода.
+    session: Arc<Mutex<Option<String>>>,
+    /// Файл с токеном сессии (рядом с config.json).
+    session_path: PathBuf,
 }
 
 /// Период переавторизации IP, пока лаунчер открыт. Держит окно авторизации живым
@@ -52,10 +58,17 @@ fn start_heartbeat(
     api_base: String,
     install: PathBuf,
     manifest: Manifest,
+    session: Arc<Mutex<Option<String>>>,
 ) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(HEARTBEAT_SECS)).await;
+            // Читаем актуальный токен: после выхода (logout) он None → авторизацию IP
+            // больше не продлеваем, окно протухает.
+            let token = session.lock().await.clone();
+            let Some(token) = token else {
+                continue;
+            };
             let install2 = install.clone();
             let m2 = manifest.clone();
             let hashes =
@@ -65,7 +78,14 @@ fn start_heartbeat(
             if hashes.is_empty() {
                 continue; // файлы пропали/подменены — окно протухнет само
             }
-            let _ = session::authorize(&client, &api_base, &manifest.version, hashes).await;
+            let _ = session::authorize(
+                &client,
+                &api_base,
+                &manifest.version,
+                hashes,
+                Some(token.as_str()),
+            )
+            .await;
         }
     });
 }
@@ -431,8 +451,29 @@ async fn play(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PlayR
         );
     }
 
-    let manifest = cached_or_load(&state).await?;
     let cfg = state.config.lock().await.clone();
+
+    // Гейт входа: играть можно только войдя через сайт (OAuth) И имея игровой аккаунт.
+    // Токен валидируем на бэкенде (me); при невалидном — чистим и просим войти заново.
+    let token = state.session.lock().await.clone();
+    let token = match token {
+        Some(t) if auth::me(&state.client, &cfg.api_base, &t).await.is_some() => t,
+        _ => {
+            // Токен отсутствует или протух — сбросим локально.
+            *state.session.lock().await = None;
+            auth::clear_token(&state.session_path);
+            return Err("Войдите в лаунчер (через сайт), чтобы играть.".to_string());
+        }
+    };
+    match auth::list_game_accounts(&state.client, &cfg.api_base, &token).await {
+        Ok(accs) if !accs.is_empty() => {}
+        Ok(_) => {
+            return Err("Создайте игровой аккаунт, чтобы играть (кнопка «Игровой аккаунт»).".to_string());
+        }
+        Err(e) => return Err(format!("Не удалось проверить игровой аккаунт: {e}")),
+    }
+
+    let manifest = cached_or_load(&state).await?;
 
     // Анти-мультибокс: не запускать больше лимита окон. Лимит — с бэкенда (админ),
     // fallback — из конфига. Подсчёт запущенных l2.exe без окна.
@@ -461,8 +502,14 @@ async fn play(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PlayR
     }
 
     // Слой 2: авторизуем IP на бэкенде (сервер aCis проверит это при входе в мир).
-    let _authorized =
-        session::authorize(&state.client, &cfg.api_base, &manifest.version, real_hashes).await;
+    let _authorized = session::authorize(
+        &state.client,
+        &cfg.api_base,
+        &manifest.version,
+        real_hashes,
+        Some(token.as_str()),
+    )
+    .await;
 
     // Heartbeat: пока лаунчер открыт, продлеваем авторизацию IP (и ловим подмену в рантайме).
     if !state.heartbeat.swap(true, std::sync::atomic::Ordering::SeqCst) {
@@ -471,6 +518,7 @@ async fn play(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PlayR
             cfg.api_base.clone(),
             cfg.install_dir.clone(),
             manifest.clone(),
+            state.session.clone(),
         );
     }
 
@@ -653,6 +701,96 @@ async fn set_client_language(
     Ok(())
 }
 
+// ---- OAuth-вход игрока, игровые аккаунты, баг-репорт ----
+
+/// Начать вход: получить код и URL подтверждения (фронт откроет его в браузере).
+#[tauri::command]
+async fn auth_begin(state: State<'_, AppState>) -> Result<auth::BeginAuth, String> {
+    let api_base = state.config.lock().await.api_base.clone();
+    auth::begin(&state.client, &api_base).await
+}
+
+/// Опросить статус привязки по секрету. При «approved» сохраняет токен.
+#[tauri::command]
+async fn auth_poll(state: State<'_, AppState>, secret: String) -> Result<auth::PollResult, String> {
+    let api_base = state.config.lock().await.api_base.clone();
+    let mut res = auth::poll(&state.client, &api_base, &secret).await?;
+    if res.status == "approved" {
+        if let Some(tok) = res.token.take() {
+            auth::save_token(&state.session_path, &tok).map_err(|e| e.to_string())?;
+            *state.session.lock().await = Some(tok);
+        }
+    }
+    // Токен во фронт не отдаём — он остаётся только в Rust (res.token уже None).
+    Ok(res)
+}
+
+/// Выйти: удалить токен локально.
+#[tauri::command]
+async fn auth_logout(state: State<'_, AppState>) -> Result<(), String> {
+    *state.session.lock().await = None;
+    auth::clear_token(&state.session_path);
+    Ok(())
+}
+
+/// Текущий игрок (по сохранённому токену) или None.
+#[tauri::command]
+async fn auth_me(state: State<'_, AppState>) -> Result<Option<auth::Me>, String> {
+    let api_base = state.config.lock().await.api_base.clone();
+    let token = state.session.lock().await.clone();
+    match token {
+        Some(t) => Ok(auth::me(&state.client, &api_base, &t).await),
+        None => Ok(None),
+    }
+}
+
+/// Список игровых аккаунтов игрока (требует входа).
+#[tauri::command]
+async fn list_game_accounts(state: State<'_, AppState>) -> Result<Vec<auth::GameAccount>, String> {
+    let api_base = state.config.lock().await.api_base.clone();
+    let token = state.session.lock().await.clone().ok_or("Сначала войдите в лаунчер")?;
+    auth::list_game_accounts(&state.client, &api_base, &token).await
+}
+
+/// Создать игровой аккаунт (login/password) — требует входа.
+#[tauri::command]
+async fn create_game_account(
+    state: State<'_, AppState>,
+    login: String,
+    password: String,
+) -> Result<String, String> {
+    let api_base = state.config.lock().await.api_base.clone();
+    let token = state.session.lock().await.clone().ok_or("Сначала войдите в лаунчер")?;
+    auth::create_game_account(&state.client, &api_base, &token, &login, &password).await
+}
+
+/// Отправить баг-репорт (тикет от имени игрока) с вложениями.
+#[tauri::command]
+async fn submit_bug_report(
+    state: State<'_, AppState>,
+    category: String,
+    subcategory: String,
+    title: String,
+    description: String,
+    files: Vec<String>,
+) -> Result<auth::ReportResult, String> {
+    let api_base = state.config.lock().await.api_base.clone();
+    let token = state.session.lock().await.clone().ok_or("Сначала войдите в лаунчер")?;
+    let version = selfupdate::current_version();
+    auth::submit_report(
+        &state.client,
+        &api_base,
+        &token,
+        version,
+        &category,
+        &subcategory,
+        &title,
+        &description,
+        &files,
+    )
+    .await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Portable: при первом запуске встать в стабильный «дом» (%LOCALAPPDATA%) и
@@ -671,6 +809,11 @@ pub fn run() {
                 .unwrap_or_else(|_| PathBuf::from("."))
                 .join("config.json");
             let config = LauncherConfig::load(&config_path);
+            let session_path = config_path
+                .parent()
+                .map(|p| p.join("session.json"))
+                .unwrap_or_else(|| PathBuf::from("session.json"));
+            let token = auth::load_token(&session_path);
             app.manage(AppState {
                 config: Mutex::new(config),
                 manifest: Mutex::new(None),
@@ -678,6 +821,8 @@ pub fn run() {
                 config_path,
                 control: Arc::new(Control::new()),
                 heartbeat: std::sync::atomic::AtomicBool::new(false),
+                session: Arc::new(Mutex::new(token)),
+                session_path,
             });
             Ok(())
         })
@@ -698,6 +843,13 @@ pub fn run() {
             sac_status,
             open_sac_settings,
             diagnostics,
+            auth_begin,
+            auth_poll,
+            auth_logout,
+            auth_me,
+            list_game_accounts,
+            create_game_account,
+            submit_bug_report,
             get_client_settings,
             set_performance_mode,
             set_client_language

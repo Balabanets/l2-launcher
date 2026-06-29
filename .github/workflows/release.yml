@@ -34,6 +34,17 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
+      # Проваливаем сборку, если HMAC-секрет не задан — иначе в бинарь уедет
+      # небезопасный дефолт (dev-insecure-secret-change-me) и authorize можно подделать.
+      - name: Verify launcher HMAC secret is set
+        env:
+          LAUNCHER_HMAC_SECRET: ${{ secrets.LAUNCHER_HMAC_SECRET }}
+        run: |
+          if [ -z "$LAUNCHER_HMAC_SECRET" ]; then
+            echo "::error::secrets.LAUNCHER_HMAC_SECRET не задан — сборка остановлена"
+            exit 1
+          fi
+
       - name: Build & release (Tauri)
         uses: tauri-apps/tauri-action@v0
         env:
