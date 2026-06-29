@@ -4,8 +4,8 @@
 связки с бэкендом. Если что-то меняется в архитектуре/хостах/релизах — обновляй этот файл и
 раздел «История обновлений» внизу.
 
-> Дата актуализации: 2026-06-12. Текущий релиз лаунчера: **v0.4.2**. Версия манифеста клиента:
-> **2026.06.12.1959** (1519 файлов).
+> Дата актуализации: 2026-06-29. Текущий релиз лаунчера: **v0.5.3**. Версия манифеста клиента:
+> **2026.06.14.1441** (1551 файл).
 
 ---
 
@@ -139,13 +139,27 @@ gh release upload manifest dist-manifest/manifest.json dist-manifest/manifest.js
 # .zst создаются рядом с файлами при --compress (переиспользуются по mtime). Загрузка ≈ 2.8 ГБ.
 ```
 
-### Выпустить новую версию лаунчера
+### Выпустить новую версию лаунчера — ЧЕК-ЛИСТ (по порядку)
 ```bash
-# бамп версии в package.json, src-tauri/tauri.conf.json, src-tauri/Cargo.toml
-git commit -am "..."; git push
-git tag vX.Y.Z && git push origin vX.Y.Z      # → CI собирает Windows-релиз
-tools/publish-launcher.sh vX.Y.Z              # подписать+залить launcher.json (самообновление)
+# 1. Бамп версии в ТРЁХ местах + Cargo.lock:
+#    package.json, src-tauri/tauri.conf.json, src-tauri/Cargo.toml
+cargo update -p l2-launcher --precise X.Y.Z
+# 2. Сборка/тесты локально (фронт + воркспейс):
+npm run build && cargo test --workspace
+# 3. Коммит и пуш main:
+git commit -am "feat: ..."; git push
+# 4. Тег ДОЛЖЕН указывать на свежий HEAD (иначе CI соберёт не то):
+git tag vX.Y.Z && git push origin vX.Y.Z      # → CI собирает Windows-релиз (~9 мин)
+#    проверка: [ "$(git rev-list -n1 vX.Y.Z)" = "$(git rev-parse HEAD)" ]
+# 5. ⚠️ ОБЯЗАТЕЛЬНО после зелёного CI — иначе самообновление НЕ увидит версию:
+tools/publish-launcher.sh vX.Y.Z              # подписать+залить launcher.json
+# 6. Проверить, что latest отдаёт новую версию (CDN может кэшировать пару секунд):
+curl -sL .../releases/latest/download/launcher.json | grep version
 ```
+> **Главная ловушка (спотыкались на v0.4.9):** CI собирает бинари и `latest.json`, но
+> подписанный `launcher.json` (метаданные кастомного самообновления) заливает ТОЛЬКО шаг 5.
+> Без него игроки не видят обновление. Ключ Ed25519 — локальный (в CI его нет намеренно),
+> поэтому шаг ручной. Самообновление в открытом лаунчере опрашивает `launcher.json` раз в 2 мин.
 
 ### Раздача (если nginx/тоннель надо пересоздать)
 ```bash
