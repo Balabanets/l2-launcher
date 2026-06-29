@@ -37,6 +37,7 @@ jobs:
       # Проваливаем сборку, если HMAC-секрет не задан — иначе в бинарь уедет
       # небезопасный дефолт (dev-insecure-secret-change-me) и authorize можно подделать.
       - name: Verify launcher HMAC secret is set
+        shell: bash
         env:
           LAUNCHER_HMAC_SECRET: ${{ secrets.LAUNCHER_HMAC_SECRET }}
         run: |
