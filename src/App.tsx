@@ -19,6 +19,10 @@ import {
   Languages,
   ShieldAlert,
   ExternalLink,
+  Activity,
+  XCircle,
+  HardDrive,
+  FileCheck2,
 } from "lucide-react";
 import {
   api,
@@ -33,6 +37,7 @@ import {
   type ServerInfo,
   type SelfUpdateInfo,
   type SacState,
+  type Diagnostics,
 } from "./lib/api";
 import { TitleBar } from "./components/TitleBar";
 import { Sigil } from "./components/Sigil";
@@ -74,6 +79,7 @@ export default function App() {
   const [selfUpd, setSelfUpd] = useState<SelfUpdateInfo | null>(null);
   const [updatingSelf, setUpdatingSelf] = useState(false);
   const [sac, setSac] = useState<SacState>("off");
+  const [showHealth, setShowHealth] = useState(false);
   const unlisten = useRef<(() => void) | null>(null);
 
   // Живой тик аптайма раз в секунду.
@@ -467,6 +473,9 @@ export default function App() {
               </>
             ) : (
               <>
+                <IconBtn title="Состояние" onClick={() => setShowHealth(true)} disabled={busy}>
+                  <Activity className="size-4" />
+                </IconBtn>
                 <IconBtn title="Проверить файлы" onClick={runVerify} disabled={busy}>
                   <ShieldCheck className="size-4" />
                 </IconBtn>
@@ -510,6 +519,25 @@ export default function App() {
             await api.saveConfig(c);
           }}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {showHealth && (
+        <Health
+          phase={phase}
+          selfUpd={selfUpd}
+          sac={sac}
+          srv={srv}
+          onClose={() => setShowHealth(false)}
+          onSelfUpdate={() => {
+            setShowHealth(false);
+            runSelfUpdate();
+          }}
+          onOpenSac={openSac}
+          onVerify={() => {
+            setShowHealth(false);
+            runVerify();
+          }}
         />
       )}
     </div>
@@ -757,6 +785,287 @@ function Settings({
             Изменения применяются только при закрытой игре.
           </p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+type HealthLevel = "ok" | "warn" | "err" | "idle";
+
+function levelColor(l: HealthLevel): string {
+  return l === "ok"
+    ? "#34d399"
+    : l === "warn"
+      ? "#c9a45c"
+      : l === "err"
+        ? "#f87171"
+        : "rgba(233,228,216,0.4)";
+}
+
+// Панель «Состояние»: наглядные чеки защиты и целостности. Часть данных приходит
+// из бэкенда (diagnostics), часть — это уже известное живое состояние (обновление
+// лаунчера, SAC, сервер, фаза проверки).
+function Health({
+  phase,
+  selfUpd,
+  sac,
+  srv,
+  onClose,
+  onSelfUpdate,
+  onOpenSac,
+  onVerify,
+}: {
+  phase: Phase;
+  selfUpd: SelfUpdateInfo | null;
+  sac: SacState;
+  srv: ServerInfo[] | null;
+  onClose: () => void;
+  onSelfUpdate: () => void;
+  onOpenSac: () => void;
+  onVerify: () => void;
+}) {
+  const [diag, setDiag] = useState<Diagnostics | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  function load() {
+    setLoading(true);
+    api
+      .diagnostics()
+      .then(setDiag)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }
+  useEffect(load, []);
+
+  const onlineCount = srv?.filter((s) => s.online).length ?? 0;
+  const players = srv?.reduce((a, s) => a + (s.online ? s.players : 0), 0) ?? 0;
+  // Свежее состояние SAC из diagnostics (обновляется кнопкой «обновить»),
+  // с откатом на стартовое значение из пропа.
+  const sacState: SacState = diag?.sac ?? sac;
+
+  type Row = {
+    icon: React.ReactNode;
+    label: string;
+    detail: string;
+    level: HealthLevel;
+    action?: { label: string; onClick: () => void };
+  };
+
+  const rows: Row[] = [
+    // Лаунчер
+    selfUpd
+      ? {
+          icon: <Download className="size-4" />,
+          label: "Лаунчер",
+          detail: `Доступно обновление ${selfUpd.version}`,
+          level: "warn",
+          action: { label: "Обновить", onClick: onSelfUpdate },
+        }
+      : {
+          icon: <Download className="size-4" />,
+          label: "Лаунчер",
+          detail: `Актуален · ${diag?.launcher_version ?? "—"}`,
+          level: "ok",
+        },
+    // Подпись манифеста
+    diag?.manifest_signature_ok === true
+      ? {
+          icon: <ShieldCheck className="size-4" />,
+          label: "Подпись клиента",
+          detail: "Ed25519 — валидна",
+          level: "ok",
+        }
+      : {
+          icon: <ShieldCheck className="size-4" />,
+          label: "Подпись клиента",
+          detail: "Не удалось проверить (оффлайн?)",
+          level: "warn",
+        },
+    // Целостность файлов (по текущей фазе)
+    phase === "ready" || phase === "playing"
+      ? {
+          icon: <FileCheck2 className="size-4" />,
+          label: "Целостность файлов",
+          detail: "Все файлы в порядке",
+          level: "ok",
+        }
+      : phase === "outdated"
+        ? {
+            icon: <FileCheck2 className="size-4" />,
+            label: "Целостность файлов",
+            detail: "Доступно обновление клиента",
+            level: "warn",
+            action: { label: "Проверить", onClick: onVerify },
+          }
+        : {
+            icon: <FileCheck2 className="size-4" />,
+            label: "Целостность файлов",
+            detail: "Требуется проверка",
+            level: "idle",
+            action: { label: "Проверить", onClick: onVerify },
+          },
+    // Игровой клиент
+    diag?.exe_present
+      ? {
+          icon: <HardDrive className="size-4" />,
+          label: "Игровой клиент",
+          detail: "L2.exe на месте",
+          level: "ok",
+        }
+      : {
+          icon: <HardDrive className="size-4" />,
+          label: "Игровой клиент",
+          detail: "L2.exe не найден — проверьте папку установки",
+          level: "err",
+        },
+    // Smart App Control
+    sacState === "off"
+      ? {
+          icon: <ShieldAlert className="size-4" />,
+          label: "Smart App Control",
+          detail: "Выключен — не мешает запуску",
+          level: "ok",
+        }
+      : sacState === "on"
+        ? {
+            icon: <ShieldAlert className="size-4" />,
+            label: "Smart App Control",
+            detail: "Включён — блокирует игру",
+            level: "err",
+            action: { label: "Выключить", onClick: onOpenSac },
+          }
+        : sacState === "evaluation"
+          ? {
+              icon: <ShieldAlert className="size-4" />,
+              label: "Smart App Control",
+              detail: "Режим оценки",
+              level: "warn",
+            }
+          : {
+              icon: <ShieldAlert className="size-4" />,
+              label: "Smart App Control",
+              detail: "Состояние неизвестно",
+              level: "idle",
+            },
+    // Антивирус (Defender)
+    diag?.defender_excluded
+      ? {
+          icon: <ShieldCheck className="size-4" />,
+          label: "Антивирус (Defender)",
+          detail: "Папка игры в исключениях",
+          level: "ok",
+        }
+      : {
+          icon: <ShieldCheck className="size-4" />,
+          label: "Антивирус (Defender)",
+          detail: "Исключение добавится при обновлении",
+          level: "warn",
+        },
+    // Сервер
+    onlineCount > 0
+      ? {
+          icon: <Server className="size-4" />,
+          label: "Сервер",
+          detail: `Онлайн · ${players} игроков`,
+          level: "ok",
+        }
+      : {
+          icon: <Server className="size-4" />,
+          label: "Сервер",
+          detail: "Оффлайн или нет связи",
+          level: "warn",
+        },
+  ];
+
+  const errs = rows.filter((r) => r.level === "err").length;
+  const warns = rows.filter((r) => r.level === "warn").length;
+  const summaryLevel: HealthLevel = errs > 0 ? "err" : warns > 0 ? "warn" : "ok";
+  const summaryText =
+    errs > 0
+      ? `${errs} ${errs === 1 ? "проблема требует" : "проблем(ы) требуют"} внимания`
+      : warns > 0
+        ? `${warns} предупреждени${warns === 1 ? "е" : "й"}`
+        : "Всё в порядке";
+  const SummaryIcon =
+    summaryLevel === "ok" ? CheckCircle2 : summaryLevel === "err" ? XCircle : AlertTriangle;
+  const sc = levelColor(summaryLevel);
+
+  return (
+    <div
+      className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div className="glass w-[480px] rounded-2xl p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="font-heading text-xl">Состояние</h2>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={load}
+              title="Обновить"
+              className="grid size-8 place-items-center rounded-md text-[rgba(233,228,216,0.6)] hover:text-[#c9a45c]"
+            >
+              <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+            </button>
+            <button
+              onClick={onClose}
+              className="grid size-8 place-items-center rounded-md text-[rgba(233,228,216,0.6)] hover:text-[#c9a45c]"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+        </div>
+
+        <div
+          className="mb-4 flex items-center gap-2.5 rounded-xl border px-4 py-3"
+          style={{ borderColor: `${sc}55`, background: `${sc}12` }}
+        >
+          <SummaryIcon className="size-5" style={{ color: sc }} />
+          <span className="text-sm font-medium" style={{ color: sc }}>
+            {summaryText}
+          </span>
+        </div>
+
+        <div className="space-y-1.5">
+          {rows.map((r, i) => {
+            const c = levelColor(r.level);
+            return (
+              <div
+                key={i}
+                className="flex items-center gap-3 rounded-lg border border-[rgba(201,164,92,0.12)] bg-white/[0.02] px-3 py-2.5"
+              >
+                <span
+                  className="grid size-7 shrink-0 place-items-center rounded-md"
+                  style={{ color: c, background: `${c}1a` }}
+                >
+                  {r.icon}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-[#e9e4d8]">{r.label}</div>
+                  <div className="truncate text-xs text-[rgba(233,228,216,0.5)]">{r.detail}</div>
+                </div>
+                {r.action ? (
+                  <button
+                    onClick={r.action.onClick}
+                    className="shrink-0 rounded-lg border border-[rgba(201,164,92,0.3)] px-3 py-1.5 text-xs text-[#c9a45c] transition hover:bg-[rgba(201,164,92,0.12)]"
+                  >
+                    {r.action.label}
+                  </button>
+                ) : (
+                  <span className="size-2 shrink-0 rounded-full" style={{ background: c }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {diag?.install_dir && (
+          <p
+            className="mt-4 truncate font-mono text-[0.7rem] text-[rgba(233,228,216,0.4)]"
+            title={diag.install_dir}
+          >
+            {diag.install_dir}
+          </p>
+        )}
       </div>
     </div>
   );

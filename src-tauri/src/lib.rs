@@ -498,6 +498,52 @@ fn sac_status() -> sac::SacState {
     sac::state()
 }
 
+/// Сводка состояния для панели «Состояние»: защита, целостность, версии.
+#[derive(Serialize)]
+struct Diagnostics {
+    /// Версия лаунчера (вшита на сборке).
+    launcher_version: String,
+    /// Версия клиента из манифеста ("—", если манифест недоступен).
+    client_version: String,
+    /// Подпись манифеста: Some(true) — манифест загружен и подпись валидна;
+    /// None — не удалось загрузить/проверить (оффлайн).
+    manifest_signature_ok: Option<bool>,
+    /// Найден ли исполняемый файл игры по пути установки.
+    exe_present: bool,
+    /// Состояние Smart App Control.
+    sac: sac::SacState,
+    /// Добавлена ли папка игры в исключения Defender.
+    defender_excluded: bool,
+    /// Путь установки клиента.
+    install_dir: String,
+}
+
+#[tauri::command]
+async fn diagnostics(state: State<'_, AppState>) -> Result<Diagnostics, String> {
+    let cfg = state.config.lock().await.clone();
+    // Манифест грузится только при валидной подписи (verify внутри load), поэтому
+    // успешная загрузка == подпись валидна. Ошибка трактуется как «не проверено».
+    let manifest = cached_or_load(state.inner()).await.ok();
+    let (client_version, exe_present, sig_ok) = match &manifest {
+        Some(m) => {
+            let exe_present = l2_manifest::safe_join(&cfg.install_dir, &m.launch.exe)
+                .map(|p| p.is_file())
+                .unwrap_or(false);
+            (m.version.clone(), exe_present, Some(true))
+        }
+        None => ("—".to_string(), false, None),
+    };
+    Ok(Diagnostics {
+        launcher_version: selfupdate::current_version().to_string(),
+        client_version,
+        manifest_signature_ok: sig_ok,
+        exe_present,
+        sac: sac::state(),
+        defender_excluded: cfg.defender_excluded,
+        install_dir: cfg.install_dir.display().to_string(),
+    })
+}
+
 /// Открыть страницу настроек Windows с переключателем Smart App Control.
 #[tauri::command]
 fn open_sac_settings() -> Result<(), String> {
@@ -651,6 +697,7 @@ pub fn run() {
             apply_self_update,
             sac_status,
             open_sac_settings,
+            diagnostics,
             get_client_settings,
             set_performance_mode,
             set_client_language

@@ -72,6 +72,18 @@ export interface ClientSettings {
 /** Состояние Smart App Control (Windows 11). */
 export type SacState = "off" | "on" | "evaluation" | "unknown";
 
+/** Сводка состояния защиты и целостности для панели «Состояние». */
+export interface Diagnostics {
+  launcher_version: string;
+  client_version: string;
+  /** true — подпись валидна; null — не удалось проверить (оффлайн). */
+  manifest_signature_ok: boolean | null;
+  exe_present: boolean;
+  sac: SacState;
+  defender_excluded: boolean;
+  install_dir: string;
+}
+
 export const api = {
   getConfig: () => invoke<LauncherConfig>("get_config"),
   saveConfig: (config: LauncherConfig) => invoke<void>("save_config", { config }),
@@ -88,6 +100,7 @@ export const api = {
   applySelfUpdate: () => invoke<void>("apply_self_update"),
   sacStatus: () => invoke<SacState>("sac_status"),
   openSacSettings: () => invoke<void>("open_sac_settings"),
+  diagnostics: () => invoke<Diagnostics>("diagnostics"),
   getClientSettings: () => invoke<ClientSettings>("get_client_settings"),
   setPerformanceMode: (enabled: boolean) => invoke<void>("set_performance_mode", { enabled }),
   setClientLanguage: (lang: string) => invoke<void>("set_client_language", { lang }),
