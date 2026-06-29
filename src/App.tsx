@@ -114,6 +114,24 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Живое обнаружение обновления лаунчера: опрос раз в 5 мин, чтобы запущенный
+  // лаунчер заметил новую версию без перезапуска. Не трогаем во время самого
+  // самообновления. checkSelfUpdate возвращает null, если версия актуальна.
+  useEffect(() => {
+    let alive = true;
+    const id = setInterval(() => {
+      if (updatingSelf) return;
+      api
+        .checkSelfUpdate()
+        .then((u) => alive && setSelfUpd(u))
+        .catch(() => {});
+    }, 300_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [updatingSelf]);
+
   // Живой статус сервера: опрос раз в 30с.
   useEffect(() => {
     let alive = true;

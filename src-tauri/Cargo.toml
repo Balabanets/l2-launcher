@@ -1,6 +1,6 @@
 [package]
 name = "l2-launcher"
-version = "0.4.9"
+version = "0.5.0"
 description = "L2 Interlude Launcher"
 authors = ["balabanets"]
 edition.workspace = true
