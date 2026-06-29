@@ -27,6 +27,11 @@ pub struct LauncherConfig {
     /// переопределить с бэкенда (/api/launcher/limits).
     #[serde(default = "default_max_clients")]
     pub max_clients: usize,
+    /// Добавлена ли уже папка игры в исключения Windows Defender (лечит ложное
+    /// срабатывание на L2.exe). Ставится один раз после успешного UAC, чтобы не
+    /// запрашивать повышение прав при каждом обновлении.
+    #[serde(default)]
+    pub defender_excluded: bool,
 }
 
 fn default_language() -> String {
@@ -51,6 +56,7 @@ impl Default for LauncherConfig {
             performance: false,
             language: default_language(),
             max_clients: default_max_clients(),
+            defender_excluded: false,
         }
     }
 }

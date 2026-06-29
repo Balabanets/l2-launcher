@@ -224,6 +224,31 @@ fn main() -> Result<()> {
 
     let mut files = files;
     files.sort_by(|a, b| a.path.cmp(&b.path));
+
+    // Защита от коллизий по регистру: Windows-клиент живёт на регистронезависимой
+    // ФС, поэтому два пути, различающиеся лишь регистром (ItemName-r.dat vs
+    // itemname-r.dat), на диске игрока — один файл с двумя разными ожидаемыми
+    // хешами → недостижимое состояние → вечный цикл «Обновить». На Linux-мастере
+    // (регистрозависимая ФС) они сосуществуют незаметно. Прерываемся явно.
+    {
+        use std::collections::HashMap;
+        let mut by_lower: HashMap<String, Vec<&str>> = HashMap::new();
+        for f in &files {
+            by_lower.entry(f.path.to_ascii_lowercase()).or_default().push(&f.path);
+        }
+        let collisions: Vec<_> = by_lower.values().filter(|v| v.len() > 1).collect();
+        if !collisions.is_empty() {
+            eprintln!("ОШИБКА: коллизии путей по регистру (Windows склеит их в один файл):");
+            for group in &collisions {
+                eprintln!("  {}", group.join("  ↔  "));
+            }
+            bail!(
+                "{} коллизий по регистру — удалите устаревшие дубликаты из --client перед генерацией",
+                collisions.len()
+            );
+        }
+    }
+
     let n_opt = files.iter().filter(|f| f.is_optional()).count();
     let n_seed = files.iter().filter(|f| f.is_seed_once()).count();
     let n_owned = files.iter().filter(|f| f.is_launcher_owned()).count();

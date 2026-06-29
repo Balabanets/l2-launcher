@@ -3,6 +3,7 @@
 pub mod client_settings;
 pub mod config;
 pub mod control;
+pub mod defender;
 pub mod download;
 pub mod install;
 pub mod launch;
@@ -236,10 +237,36 @@ async fn check_update(state: State<'_, AppState>) -> Result<CheckResult, String>
 }
 
 /// Скачать обновление (missing + изменённые по размеру). Прогресс — `update:progress`.
+/// Однократно (запоминаем в конфиге) добавить папку установки в исключения Windows
+/// Defender — лечит ложное срабатывание эвристики на неподписанном L2.exe. Вызывается
+/// ДО скачивания, чтобы Defender не отправил свежие файлы в карантин. Один UAC-промпт
+/// за всё время; при отказе UAC флаг не ставится → попытка повторится в след. раз.
+/// Тихо и best-effort: ошибка/отказ не должны мешать обновлению.
+async fn ensure_defender_exclusion_once(state: &State<'_, AppState>) {
+    let (install, done) = {
+        let cfg = state.config.lock().await;
+        (cfg.install_dir.clone(), cfg.defender_excluded)
+    };
+    if done {
+        return;
+    }
+    let ok = tokio::task::spawn_blocking(move || defender::ensure_exclusion(&install).is_ok())
+        .await
+        .unwrap_or(false);
+    if ok {
+        let mut cfg = state.config.lock().await;
+        cfg.defender_excluded = true;
+        let _ = cfg.save(&state.config_path);
+    }
+}
+
 #[tauri::command]
 async fn start_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     state.control.reset();
     let manifest = cached_or_load(&state).await?;
+    // До скачивания: добавить папку в исключения Defender (один раз), иначе свежий
+    // L2.exe может попасть в карантин прямо во время загрузки → цикл «недостающий файл».
+    ensure_defender_exclusion_once(&state).await;
     let cfg = state.config.lock().await.clone();
     let install = cfg.install_dir.clone();
     let m = manifest.clone();
@@ -288,6 +315,9 @@ async fn start_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Resu
 async fn repair(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<ScanSummary, String> {
     state.control.reset();
     let manifest = cached_or_load(&state).await?;
+    // Если Defender уже отправил L2.exe в карантин — добавляем исключение до починки,
+    // чтобы докачанный файл не удалили снова.
+    ensure_defender_exclusion_once(&state).await;
     let cfg = state.config.lock().await.clone();
     let install = cfg.install_dir.clone();
 
