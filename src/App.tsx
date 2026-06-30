@@ -59,13 +59,6 @@ type Phase =
   | "playing"
   | "error";
 
-const RATES = [
-  { label: "EXP", value: "x1" },
-  { label: "SP", value: "x1" },
-  { label: "Adena", value: "x1" },
-  { label: "Drop", value: "x1" },
-];
-
 
 // Операции с прогрессом, которые можно ставить на паузу/отменять.
 const RUNNING: Phase[] = ["updating", "repairing", "verifying"];
@@ -73,7 +66,6 @@ const RUNNING: Phase[] = ["updating", "repairing", "verifying"];
 export default function App() {
   const [phase, setPhase] = useState<Phase>("checking");
   const [status, setStatus] = useState("Проверка обновлений…");
-  const [version, setVersion] = useState("—");
   const [bytesNeeded, setBytesNeeded] = useState(0);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [paused, setPaused] = useState(false);
@@ -265,7 +257,6 @@ export default function App() {
     setStatus("Проверка обновлений…");
     try {
       const r = await api.checkUpdate();
-      setVersion(r.version);
       setBytesNeeded(r.bytes_to_download);
       if (r.needs_update) {
         setPhase("outdated");
@@ -426,29 +417,9 @@ export default function App() {
           )}
           <ServerCards servers={srv} now={now} />
 
-          <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-[rgba(201,164,92,0.25)] bg-white/[0.03] px-4 py-1.5 text-[0.7rem] tracking-[0.2em] text-[rgba(201,164,92,0.9)] uppercase">
-            Хроника Interlude · сборка {version} · Classic x1
-          </div>
-          <h1 className="mt-4 font-display text-6xl font-extrabold leading-none">
+          <h1 className="mt-6 font-display text-6xl font-extrabold leading-none">
             <span className="shimmer-gold">INTERLUDE</span>
           </h1>
-          <ul className="mt-7 flex items-center gap-7">
-            {RATES.map((r) => (
-              <li key={r.label} className="flex flex-col items-center">
-                <span className="font-mono text-2xl font-semibold text-[#c9a45c]">{r.value}</span>
-                <span className="text-[0.65rem] tracking-[0.18em] text-[rgba(233,228,216,0.45)] uppercase">
-                  {r.label}
-                </span>
-              </li>
-            ))}
-          </ul>
-
-          {/* Статус по центру — спокойная строка под рейтами. */}
-          <div className="reveal mt-7 flex min-h-[1.5rem] items-center justify-center gap-2.5">
-            <StatusIcon phase={phase} paused={paused} />
-            <span className="text-sm tracking-wide text-[rgba(233,228,216,0.85)]">{status}</span>
-            {authError && <span className="text-xs text-red-300">· {authError}</span>}
-          </div>
 
           {bad.length > 0 && (
             <div className="mt-6 max-w-md rounded-xl border border-red-500/30 bg-red-500/[0.06] px-4 py-3 text-left text-xs text-red-200/90">
@@ -531,12 +502,23 @@ export default function App() {
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex min-h-[1.75rem] items-center">
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4">
+          {/* Слева: профиль (позже — баланс донат-коинов). */}
+          <div className="flex min-h-[1.75rem] items-center justify-self-start">
             {me && <ProfileMenu me={me} onLogout={logout} />}
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* По центру: статус. */}
+          <div className="flex min-w-0 items-center justify-center gap-2.5 px-2 text-center">
+            <StatusIcon phase={phase} paused={paused} />
+            <span className="truncate text-sm tracking-wide text-[rgba(233,228,216,0.85)]">
+              {status}
+            </span>
+            {authError && <span className="shrink-0 text-xs text-red-300">· {authError}</span>}
+          </div>
+
+          {/* Справа: действия. */}
+          <div className="flex items-center justify-end gap-2 justify-self-end">
             {running ? (
               <>
                 <IconBtn title={paused ? "Возобновить" : "Пауза"} onClick={togglePause}>
