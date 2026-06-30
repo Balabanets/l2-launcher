@@ -21,7 +21,6 @@ import {
   ShieldAlert,
   ExternalLink,
   LogIn,
-  LogOut,
   Bug,
   UserPlus,
 } from "lucide-react";
@@ -47,6 +46,8 @@ import { Ambient } from "./components/Ambient";
 import { BugReport } from "./components/BugReport";
 import { GameAccountModal } from "./components/GameAccount";
 import { LoginPrompt } from "./components/LoginPrompt";
+import { ProfileMenu } from "./components/ProfileMenu";
+import { Hints } from "./components/Hints";
 
 type Phase =
   | "checking"
@@ -524,22 +525,13 @@ export default function App() {
         )}
 
         <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 text-sm">
-            <StatusIcon phase={phase} paused={paused} />
-            <span className="text-[rgba(233,228,216,0.8)]">{status}</span>
-            {me && (
-              <span className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-[rgba(201,164,92,0.25)] bg-white/[0.03] px-2.5 py-1 text-xs text-[rgba(233,228,216,0.75)]">
-                {me.name ?? me.email ?? "Игрок"}
-                <button
-                  onClick={logout}
-                  title="Выйти"
-                  className="text-[rgba(233,228,216,0.5)] transition hover:text-[#c9a45c]"
-                >
-                  <LogOut className="size-3.5" />
-                </button>
-              </span>
-            )}
-            {authError && <span className="text-xs text-red-300">{authError}</span>}
+          <div className="flex flex-col items-start gap-1.5">
+            <div className="flex items-center gap-3 text-sm">
+              <StatusIcon phase={phase} paused={paused} />
+              <span className="text-[rgba(233,228,216,0.8)]">{status}</span>
+              {authError && <span className="text-xs text-red-300">{authError}</span>}
+            </div>
+            {me && <ProfileMenu me={me} onLogout={logout} />}
           </div>
 
           <div className="flex items-center gap-2">
@@ -629,6 +621,8 @@ export default function App() {
       {showGameAcc && <GameAccountModal onClose={() => setShowGameAcc(false)} />}
 
       {showBug && <BugReport onClose={() => setShowBug(false)} />}
+
+      <Hints enabled={!!me && !running && !showSettings && !showGameAcc && !showBug} />
     </div>
   );
 }

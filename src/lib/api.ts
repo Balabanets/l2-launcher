@@ -139,6 +139,8 @@ export const api = {
   listGameAccounts: () => invoke<GameAccount[]>("list_game_accounts"),
   createGameAccount: (login: string, password: string) =>
     invoke<string>("create_game_account", { login, password }),
+  changeGameAccountPassword: (login: string, password: string) =>
+    invoke<void>("change_game_account_password", { login, password }),
   submitBugReport: (
     category: string,
     subcategory: string,

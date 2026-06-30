@@ -178,6 +178,28 @@ pub async fn create_game_account(
     Ok(d.login)
 }
 
+/// Сменить пароль игрового аккаунта (владельца — по токену).
+pub async fn change_game_account_password(
+    client: &reqwest::Client,
+    base: &str,
+    token: &str,
+    login: &str,
+    password: &str,
+) -> Result<(), String> {
+    // login по loginSchema — алфанумерик, безопасен в пути.
+    let url = format!("{}/api/launcher/game-accounts/{}/password", base.trim_end_matches('/'), login);
+    let resp = client
+        .post(&url)
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "password": password }))
+        .timeout(TIMEOUT)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let _: serde_json::Value = unwrap_env(resp).await?;
+    Ok(())
+}
+
 // ---- баг-репорт ----
 
 #[derive(Serialize, Clone)]
