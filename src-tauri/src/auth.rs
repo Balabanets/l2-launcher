@@ -178,6 +178,31 @@ pub async fn create_game_account(
     Ok(d.login)
 }
 
+/// Привязать существующий игровой аккаунт к профилю (проверка пароля на сервере).
+pub async fn claim_game_account(
+    client: &reqwest::Client,
+    base: &str,
+    token: &str,
+    login: &str,
+    password: &str,
+) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct Claimed {
+        login: String,
+    }
+    let url = format!("{}/api/launcher/game-accounts/claim", base.trim_end_matches('/'));
+    let resp = client
+        .post(&url)
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "login": login, "password": password }))
+        .timeout(TIMEOUT)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let d: Claimed = unwrap_env(resp).await?;
+    Ok(d.login)
+}
+
 /// Сменить пароль игрового аккаунта (владельца — по токену).
 pub async fn change_game_account_password(
     client: &reqwest::Client,

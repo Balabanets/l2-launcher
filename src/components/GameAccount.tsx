@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { X, UserPlus, KeyRound, Check, Plus, Loader2 } from "lucide-react";
+import { X, UserPlus, KeyRound, Check, Plus, Loader2, Link2 } from "lucide-react";
 import { api, type GameAccount } from "../lib/api";
 
 /** Игровые аккаунты: список текущих + смена пароля + добавление. */
@@ -10,7 +10,7 @@ export function GameAccountModal({ onClose }: { onClose: () => void }) {
   const [rowBusy, setRowBusy] = useState(false);
   const [rowMsg, setRowMsg] = useState<{ login: string; ok: boolean; text: string } | null>(null);
 
-  const [adding, setAdding] = useState(false);
+  const [mode, setMode] = useState<"none" | "create" | "claim">("none");
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [createBusy, setCreateBusy] = useState(false);
@@ -39,14 +39,23 @@ export function GameAccountModal({ onClose }: { onClose: () => void }) {
     }
   }
 
-  async function create() {
+  function reset() {
+    setLogin("");
+    setPassword("");
+    setMode("none");
+    setCreateError(null);
+  }
+
+  async function submitForm() {
     setCreateBusy(true);
     setCreateError(null);
     try {
-      await api.createGameAccount(login.trim(), password);
-      setLogin("");
-      setPassword("");
-      setAdding(false);
+      if (mode === "claim") {
+        await api.claimGameAccount(login.trim(), password);
+      } else {
+        await api.createGameAccount(login.trim(), password);
+      }
+      reset();
       load();
     } catch (e) {
       setCreateError(String(e));
@@ -139,20 +148,34 @@ export function GameAccountModal({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* Добавление */}
+        {/* Добавление / привязка */}
         <div className="mt-4 border-t border-[rgba(201,164,92,0.15)] pt-4">
-          {!adding ? (
-            <button
-              onClick={() => setAdding(true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-[rgba(201,164,92,0.3)] px-4 py-2 text-sm text-[#c9a45c] transition hover:bg-[rgba(201,164,92,0.12)]"
-            >
-              <Plus className="size-4" /> Добавить аккаунт
-            </button>
+          {mode === "none" ? (
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setMode("create")}
+                className="inline-flex items-center gap-2 rounded-lg border border-[rgba(201,164,92,0.3)] px-4 py-2 text-sm text-[#c9a45c] transition hover:bg-[rgba(201,164,92,0.12)]"
+              >
+                <Plus className="size-4" /> Создать новый
+              </button>
+              <button
+                onClick={() => setMode("claim")}
+                className="inline-flex items-center gap-2 rounded-lg border border-[rgba(201,164,92,0.2)] px-4 py-2 text-sm text-[rgba(233,228,216,0.8)] transition hover:border-[rgba(201,164,92,0.5)] hover:text-[#c9a45c]"
+              >
+                <Link2 className="size-4" /> Привязать существующий
+              </button>
+            </div>
           ) : (
             <div className="flex flex-col gap-2">
               <div className="text-xs tracking-wide text-[rgba(233,228,216,0.55)] uppercase">
-                Новый аккаунт
+                {mode === "claim" ? "Привязать существующий аккаунт" : "Новый аккаунт"}
               </div>
+              {mode === "claim" && (
+                <p className="text-xs text-[rgba(233,228,216,0.5)]">
+                  Введите логин и пароль уже существующего игрового аккаунта — он привяжется
+                  к вашему профилю.
+                </p>
+              )}
               <input
                 value={login}
                 onChange={(e) => setLogin(e.target.value)}
@@ -171,18 +194,21 @@ export function GameAccountModal({ onClose }: { onClose: () => void }) {
               {createError && <p className="text-xs text-red-300">{createError}</p>}
               <div className="flex gap-2">
                 <button
-                  onClick={create}
+                  onClick={submitForm}
                   disabled={createBusy || login.trim().length === 0 || password.length === 0}
                   className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-b from-[#e0c486] to-[#c9a45c] px-5 py-2 text-sm font-medium text-[#1a1407] transition hover:from-[#f0d59a] hover:to-[#d4af68] disabled:cursor-not-allowed disabled:opacity-45"
                 >
-                  {createBusy ? <Loader2 className="size-4 animate-spin" /> : <UserPlus className="size-4" />}
-                  Создать
+                  {createBusy ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : mode === "claim" ? (
+                    <Link2 className="size-4" />
+                  ) : (
+                    <UserPlus className="size-4" />
+                  )}
+                  {mode === "claim" ? "Привязать" : "Создать"}
                 </button>
                 <button
-                  onClick={() => {
-                    setAdding(false);
-                    setCreateError(null);
-                  }}
+                  onClick={reset}
                   className="rounded-lg border border-[rgba(201,164,92,0.2)] px-4 py-2 text-sm text-[rgba(233,228,216,0.7)] transition hover:text-[#c9a45c]"
                 >
                   Отмена

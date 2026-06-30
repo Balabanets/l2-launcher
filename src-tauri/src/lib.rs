@@ -764,6 +764,18 @@ async fn create_game_account(
     auth::create_game_account(&state.client, &api_base, &token, &login, &password).await
 }
 
+/// Привязать существующий игровой аккаунт к профилю (требует входа).
+#[tauri::command]
+async fn claim_game_account(
+    state: State<'_, AppState>,
+    login: String,
+    password: String,
+) -> Result<String, String> {
+    let api_base = state.config.lock().await.api_base.clone();
+    let token = state.session.lock().await.clone().ok_or("Сначала войдите в лаунчер")?;
+    auth::claim_game_account(&state.client, &api_base, &token, &login, &password).await
+}
+
 /// Сменить пароль игрового аккаунта (требует входа).
 #[tauri::command]
 async fn change_game_account_password(
@@ -861,6 +873,7 @@ pub fn run() {
             auth_me,
             list_game_accounts,
             create_game_account,
+            claim_game_account,
             change_game_account_password,
             submit_bug_report,
             get_client_settings,

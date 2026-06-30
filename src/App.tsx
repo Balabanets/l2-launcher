@@ -443,6 +443,13 @@ export default function App() {
             ))}
           </ul>
 
+          {/* Статус по центру — спокойная строка под рейтами. */}
+          <div className="reveal mt-7 flex min-h-[1.5rem] items-center justify-center gap-2.5">
+            <StatusIcon phase={phase} paused={paused} />
+            <span className="text-sm tracking-wide text-[rgba(233,228,216,0.85)]">{status}</span>
+            {authError && <span className="text-xs text-red-300">· {authError}</span>}
+          </div>
+
           {bad.length > 0 && (
             <div className="mt-6 max-w-md rounded-xl border border-red-500/30 bg-red-500/[0.06] px-4 py-3 text-left text-xs text-red-200/90">
               <div className="mb-1 flex items-center gap-2 font-medium text-red-300">
@@ -525,12 +532,7 @@ export default function App() {
         )}
 
         <div className="flex items-center justify-between gap-4">
-          <div className="flex flex-col items-start gap-1.5">
-            <div className="flex items-center gap-3 text-sm">
-              <StatusIcon phase={phase} paused={paused} />
-              <span className="text-[rgba(233,228,216,0.8)]">{status}</span>
-              {authError && <span className="text-xs text-red-300">{authError}</span>}
-            </div>
+          <div className="flex min-h-[1.75rem] items-center">
             {me && <ProfileMenu me={me} onLogout={logout} />}
           </div>
 
