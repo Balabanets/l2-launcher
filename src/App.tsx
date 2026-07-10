@@ -426,38 +426,52 @@ export default function App() {
         <Ambient />
 
         <div
-          className="relative flex h-full flex-col items-center justify-center px-10 text-center transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
+          className="absolute inset-0 z-10 transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
           style={{
             opacity: introDone || introFading ? 1 : 0,
             transform: introDone || introFading ? "scale(1)" : "scale(1.04)",
             filter: introDone || introFading ? "blur(0px)" : "blur(6px)",
           }}
         >
-          {selfUpd && !updatingSelf && (
-            <button
-              onClick={runSelfUpdate}
-              className="group mb-5 inline-flex items-center gap-2.5 rounded-full border border-[rgba(201,164,92,0.4)] bg-[rgba(201,164,92,0.08)] px-5 py-2 text-sm text-[#e9e4d8] transition hover:bg-[rgba(201,164,92,0.16)]"
-            >
-              <Download className="size-4 text-[#c9a45c] transition group-hover:translate-y-0.5" />
-              Доступно обновление лаунчера{" "}
-              <span className="font-mono text-[#c9a45c]">{selfUpd.version}</span>
-              <span className="ml-1 rounded-md bg-[rgba(201,164,92,0.18)] px-2 py-0.5 text-[0.7rem] tracking-wide text-[#c9a45c] uppercase">
-                Обновить
-              </span>
-            </button>
-          )}
-
-          {/* Главный логотип LUNARGENT (как на сайте) — парит */}
+          {/* Mentis — справа внизу, лёгкое парение (за логотипом по слою) */}
           <img
-            src="/brand/logo-hero.webp"
-            alt="LUNARGENT"
-            className="launch-logo pointer-events-none mb-6 h-auto w-full max-w-[20rem] object-contain"
+            src="/brand/mentis.webp"
+            alt=""
+            aria-hidden
+            className="launch-float pointer-events-none absolute bottom-0 right-1 z-0 h-[52%] max-h-[440px] w-auto object-contain"
           />
 
-          <ServerCards servers={srv} now={now} />
+          {/* Центр: крупный логотип LUNARGENT + важные предупреждения */}
+          <div className="relative z-10 flex h-full flex-col items-center justify-center px-10 pb-[14%] text-center">
+            {selfUpd && !updatingSelf && (
+              <button
+                onClick={runSelfUpdate}
+                className="group mb-5 inline-flex items-center gap-2.5 rounded-full border border-[rgba(201,164,92,0.4)] bg-[rgba(201,164,92,0.08)] px-5 py-2 text-sm text-[#e9e4d8] transition hover:bg-[rgba(201,164,92,0.16)]"
+              >
+                <Download className="size-4 text-[#c9a45c] transition group-hover:translate-y-0.5" />
+                Доступно обновление лаунчера{" "}
+                <span className="font-mono text-[#c9a45c]">{selfUpd.version}</span>
+                <span className="ml-1 rounded-md bg-[rgba(201,164,92,0.18)] px-2 py-0.5 text-[0.7rem] tracking-wide text-[#c9a45c] uppercase">
+                  Обновить
+                </span>
+              </button>
+            )}
+
+            {/* Главный логотип LUNARGENT (как на сайте) — крупный, статичный */}
+            <img
+              src="/brand/logo-hero.webp"
+              alt="LUNARGENT"
+              className="pointer-events-none h-auto max-h-[62%] w-full max-w-[28rem] object-contain"
+            />
+          </div>
+
+          {/* Карточки серверов — слева внизу */}
+          <div className="absolute bottom-5 left-6 z-20 w-[min(20rem,42%)]">
+            <ServerCards servers={srv} now={now} />
+          </div>
 
           {bad.length > 0 && (
-            <div className="mt-6 max-w-md rounded-xl border border-red-500/30 bg-red-500/[0.06] px-4 py-3 text-left text-xs text-red-200/90">
+            <div className="absolute bottom-24 left-1/2 z-20 max-w-md -translate-x-1/2 rounded-xl border border-red-500/30 bg-red-500/[0.06] px-4 py-3 text-left text-xs text-red-200/90">
               <div className="mb-1 flex items-center gap-2 font-medium text-red-300">
                 <AlertTriangle className="size-4" /> Нарушена целостность файлов
               </div>
@@ -471,7 +485,7 @@ export default function App() {
           )}
 
           {sac === "on" && (
-            <div className="mt-6 max-w-lg rounded-xl border border-amber-500/40 bg-amber-500/[0.07] px-5 py-4 text-left text-amber-100/90">
+            <div className="absolute left-1/2 top-1/2 z-20 max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-amber-500/40 bg-amber-500/[0.07] px-5 py-4 text-left text-amber-100/90 backdrop-blur-md">
               <div className="mb-2 flex items-center gap-2 font-medium text-amber-300">
                 <ShieldAlert className="size-4" /> Smart App Control блокирует запуск игры
               </div>
@@ -510,7 +524,7 @@ export default function App() {
             Нижнюю панель (статус/управление) не перекрывает — она отдельный сосед. */}
         {!introDone && (
           <div
-            className="absolute inset-0 z-30 cursor-pointer bg-black transition-opacity duration-700 ease-out"
+            className="absolute inset-0 z-30 cursor-pointer overflow-hidden bg-black transition-opacity duration-700 ease-out"
             style={{ opacity: introFading ? 0 : 1 }}
             onClick={endIntro}
             role="button"
@@ -518,6 +532,18 @@ export default function App() {
             aria-label="Пропустить заставку"
             onKeyDown={(e) => (e.key === "Enter" || e.key === "Escape" || e.key === " ") && endIntro()}
           >
+            {/* Размытый фон-заполнитель: та же анимация, cover+blur — заполняет поля
+                по бокам без искажения пропорций основного видео (без чёрных полос). */}
+            <video
+              src="/intro.mp4"
+              autoPlay
+              muted
+              playsInline
+              preload="auto"
+              aria-hidden
+              className="absolute inset-0 h-full w-full scale-110 object-cover blur-3xl brightness-[0.5]"
+            />
+            {/* Основное видео — целиком, без обрезки и без растяжения. */}
             <video
               src="/intro.mp4"
               autoPlay
@@ -525,7 +551,7 @@ export default function App() {
               playsInline
               preload="auto"
               onEnded={endIntro}
-              className="h-full w-full object-contain"
+              className="relative h-full w-full object-contain"
             />
           </div>
         )}

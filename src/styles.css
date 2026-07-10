@@ -142,16 +142,19 @@ h3 {
   from { opacity: 0; transform: translateY(18px); }
   to { opacity: 1; transform: translateY(0); }
 }
-/* Парение главного логотипа (как на сайте) */
-@keyframes logo-float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-8px); }
+/* Лёгкое парение (Mentis). translate3d + will-change → GPU-слой, без рывков. */
+@keyframes launch-float {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -9px, 0); }
 }
-.launch-logo { animation: logo-float 7.5s ease-in-out infinite; }
+.launch-float {
+  animation: launch-float 7.5s ease-in-out infinite;
+  will-change: transform;
+}
 /* Появление — чистый CSS: по умолчанию видимо, анимация только если движение разрешено. */
 @media (prefers-reduced-motion: no-preference) {
   .reveal { opacity: 0; animation: reveal-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .shimmer-gold, .breathe, .pulse, .launch-logo { animation: none; }
+  .shimmer-gold, .breathe, .pulse, .launch-float { animation: none; }
 }

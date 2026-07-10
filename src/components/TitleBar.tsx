@@ -6,9 +6,9 @@ export function TitleBar() {
   return (
     <div className="drag flex h-11 items-center justify-between px-4 border-b border-[rgba(201,164,92,0.12)]">
       {/* Бренд как в шапке сайта: эмблема-кристалл + серебристый wordmark LUNARGENT */}
-      <div className="flex items-center gap-2">
-        <img src="/brand/crystal-bolt.webp" alt="" aria-hidden className="h-7 w-auto object-contain" />
-        <img src="/brand/wordmark.webp" alt="LUNARGENT" className="h-4 w-auto object-contain" />
+      <div className="flex items-center gap-2.5">
+        <img src="/brand/crystal-bolt.webp" alt="" aria-hidden className="h-9 w-auto object-contain" />
+        <img src="/brand/wordmark.webp" alt="LUNARGENT" className="h-[1.3rem] w-auto object-contain" />
       </div>
       <div className="no-drag flex items-center gap-1">
         <button
