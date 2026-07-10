@@ -72,6 +72,11 @@ export default function App() {
   const [bad, setBad] = useState<string[]>([]);
   const [config, setConfig] = useState<LauncherConfig | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  // Интро-анимация в главном фрейме при запуске (muted). Уважает reduced-motion.
+  const [introDone, setIntroDone] = useState(
+    () => typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches,
+  );
+  const [introFading, setIntroFading] = useState(false);
   const [srv, setSrv] = useState<ServerInfo[] | null>(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [selfUpd, setSelfUpd] = useState<SelfUpdateInfo | null>(null);
@@ -383,6 +388,13 @@ export default function App() {
   const pct = progress && progress.total > 0 ? (progress.processed / progress.total) * 100 : 0;
   const showProgress = running && progress;
 
+  // Плавно завершить интро: fade-out 500мс, затем снять оверлей.
+  const endIntro = () => {
+    if (introFading || introDone) return;
+    setIntroFading(true);
+    setTimeout(() => setIntroDone(true), 550);
+  };
+
   return (
     <div className="flex h-full flex-col bg-[#0a0a0b] text-[#e9e4d8]">
       <TitleBar />
@@ -470,6 +482,33 @@ export default function App() {
             </div>
           )}
         </div>
+
+        {/* Интро-анимация запуска — только в этом фрейме, поверх фона/контента.
+            Нижнюю панель (статус/управление) не перекрывает — она отдельный сосед. */}
+        {!introDone && (
+          <div
+            className="absolute inset-0 z-30 cursor-pointer bg-black transition-opacity duration-500"
+            style={{ opacity: introFading ? 0 : 1 }}
+            onClick={endIntro}
+            role="button"
+            tabIndex={0}
+            aria-label="Пропустить заставку"
+            onKeyDown={(e) => (e.key === "Enter" || e.key === "Escape" || e.key === " ") && endIntro()}
+          >
+            <video
+              src="/intro.mp4"
+              autoPlay
+              muted
+              playsInline
+              preload="auto"
+              onEnded={endIntro}
+              className="h-full w-full object-cover"
+            />
+            <span className="pointer-events-none absolute bottom-4 right-5 text-xs tracking-wide text-white/40">
+              Пропустить →
+            </span>
+          </div>
+        )}
       </div>
 
       {/* нижняя панель */}
