@@ -142,10 +142,16 @@ h3 {
   from { opacity: 0; transform: translateY(18px); }
   to { opacity: 1; transform: translateY(0); }
 }
+/* Парение главного логотипа (как на сайте) */
+@keyframes logo-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.launch-logo { animation: logo-float 7.5s ease-in-out infinite; }
 /* Появление — чистый CSS: по умолчанию видимо, анимация только если движение разрешено. */
 @media (prefers-reduced-motion: no-preference) {
   .reveal { opacity: 0; animation: reveal-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .shimmer-gold, .breathe, .pulse { animation: none; }
+  .shimmer-gold, .breathe, .pulse, .launch-logo { animation: none; }
 }

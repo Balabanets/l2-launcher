@@ -392,7 +392,7 @@ export default function App() {
   const endIntro = () => {
     if (introFading || introDone) return;
     setIntroFading(true);
-    setTimeout(() => setIntroDone(true), 550);
+    setTimeout(() => setIntroDone(true), 750);
   };
 
   return (
@@ -400,20 +400,39 @@ export default function App() {
       <TitleBar />
 
       <div className="relative flex-1 overflow-hidden">
-        <Ambient />
-        {/* тонкая решётка */}
+        {/* Фон как на сайте: сцена с замком (public/hero-base.jpg, cover) */}
         <div
-          className="pointer-events-none absolute inset-0 opacity-[0.05]"
+          className="pointer-events-none absolute inset-0"
           style={{
-            backgroundImage:
-              "linear-gradient(to right, #c9a45c 1px, transparent 1px), linear-gradient(to bottom, #c9a45c 1px, transparent 1px)",
-            backgroundSize: "56px 56px",
-            maskImage: "radial-gradient(70% 60% at 50% 30%, #000 0%, transparent 75%)",
-            WebkitMaskImage: "radial-gradient(70% 60% at 50% 30%, #000 0%, transparent 75%)",
+            backgroundColor: "#0a0a0b",
+            backgroundImage: "url('/hero-base.jpg')",
+            backgroundRepeat: "no-repeat",
+            backgroundPosition: "center center",
+            backgroundSize: "cover",
           }}
         />
+        {/* Скрим — темнее книзу, для читаемости контента (как на сайте) */}
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(180deg, rgba(10,10,11,0.42) 0%, rgba(10,10,11,0.5) 30%, rgba(10,10,11,0.66) 68%, rgba(10,10,11,0.86) 100%)",
+          }}
+        />
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{ background: "radial-gradient(130% 110% at 50% 34%, transparent 38%, rgba(10,10,11,0.6) 100%)" }}
+        />
+        <Ambient />
 
-        <div className="reveal relative flex h-full flex-col items-center justify-center px-10 text-center">
+        <div
+          className="relative flex h-full flex-col items-center justify-center px-10 text-center transition-[opacity,transform,filter] duration-[900ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
+          style={{
+            opacity: introDone || introFading ? 1 : 0,
+            transform: introDone || introFading ? "scale(1)" : "scale(1.04)",
+            filter: introDone || introFading ? "blur(0px)" : "blur(6px)",
+          }}
+        >
           {selfUpd && !updatingSelf && (
             <button
               onClick={runSelfUpdate}
@@ -427,11 +446,15 @@ export default function App() {
               </span>
             </button>
           )}
-          <ServerCards servers={srv} now={now} />
 
-          <h1 className="mt-6 font-display text-6xl font-extrabold leading-none">
-            <span className="shimmer-gold">INTERLUDE</span>
-          </h1>
+          {/* Главный логотип LUNARGENT (как на сайте) — парит */}
+          <img
+            src="/brand/logo-hero.webp"
+            alt="LUNARGENT"
+            className="launch-logo pointer-events-none mb-6 h-auto w-full max-w-[20rem] object-contain"
+          />
+
+          <ServerCards servers={srv} now={now} />
 
           {bad.length > 0 && (
             <div className="mt-6 max-w-md rounded-xl border border-red-500/30 bg-red-500/[0.06] px-4 py-3 text-left text-xs text-red-200/90">
@@ -487,7 +510,7 @@ export default function App() {
             Нижнюю панель (статус/управление) не перекрывает — она отдельный сосед. */}
         {!introDone && (
           <div
-            className="absolute inset-0 z-30 cursor-pointer bg-black transition-opacity duration-500"
+            className="absolute inset-0 z-30 cursor-pointer bg-black transition-opacity duration-700 ease-out"
             style={{ opacity: introFading ? 0 : 1 }}
             onClick={endIntro}
             role="button"
@@ -502,11 +525,8 @@ export default function App() {
               playsInline
               preload="auto"
               onEnded={endIntro}
-              className="h-full w-full object-cover"
+              className="h-full w-full object-contain"
             />
-            <span className="pointer-events-none absolute bottom-4 right-5 text-xs tracking-wide text-white/40">
-              Пропустить →
-            </span>
           </div>
         )}
       </div>
