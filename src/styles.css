@@ -151,6 +151,19 @@ h3 {
   animation: launch-float 7.5s ease-in-out infinite;
   will-change: transform;
 }
+
+/* Появление подсказок/чата Mentis */
+@keyframes mentis-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.mentis-tip { animation: mentis-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.mentis-chat { animation: mentis-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes mentis-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(4px); }
+}
+.mentis-bob { animation: mentis-bob 1.4s ease-in-out infinite; }
 /* Появление — чистый CSS: по умолчанию видимо, анимация только если движение разрешено. */
 @media (prefers-reduced-motion: no-preference) {
   .reveal { opacity: 0; animation: reveal-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }

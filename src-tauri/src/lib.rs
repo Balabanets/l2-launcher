@@ -219,6 +219,36 @@ async fn server_status(state: State<'_, AppState>) -> Result<Vec<ServerInfoOut>,
         .collect())
 }
 
+/// Прокси к ассистенту Mentis: POST {messages} → reply. Ходит через доверенный
+/// бэкенд-хост (api_base), поэтому вебвью остаётся со строгим connect-src 'self'.
+#[tauri::command]
+async fn assistant_chat(
+    state: State<'_, AppState>,
+    messages: serde_json::Value,
+) -> Result<String, String> {
+    let api = state.config.lock().await.api_base.clone();
+    let url = format!("{}/api/assistant", api.trim_end_matches('/'));
+    let resp = state
+        .client
+        .post(&url)
+        .timeout(std::time::Duration::from_secs(30))
+        .json(&serde_json::json!({ "messages": messages }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("assistant HTTP {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let reply = v
+        .get("data")
+        .and_then(|d| d.get("reply"))
+        .and_then(|r| r.as_str())
+        .unwrap_or("…")
+        .to_string();
+    Ok(reply)
+}
+
 #[tauri::command]
 async fn save_config(state: State<'_, AppState>, config: LauncherConfig) -> Result<(), String> {
     config.validate()?; // отклоняем недоверенные источники / некорректные пути
@@ -854,6 +884,7 @@ pub fn run() {
             get_config,
             save_config,
             server_status,
+            assistant_chat,
             check_update,
             start_update,
             repair,

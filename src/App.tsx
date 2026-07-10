@@ -47,7 +47,7 @@ import { BugReport } from "./components/BugReport";
 import { GameAccountModal } from "./components/GameAccount";
 import { LoginPrompt } from "./components/LoginPrompt";
 import { ProfileMenu } from "./components/ProfileMenu";
-import { Hints } from "./components/Hints";
+import { MentisAssistant } from "./components/MentisAssistant";
 
 type Phase =
   | "checking"
@@ -88,6 +88,7 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [showBug, setShowBug] = useState(false);
   const [showGameAcc, setShowGameAcc] = useState(false);
+  const [showMentis, setShowMentis] = useState(false);
   const unlisten = useRef<(() => void) | null>(null);
   const loginAbort = useRef(false);
 
@@ -433,37 +434,42 @@ export default function App() {
             filter: introDone || introFading ? "blur(0px)" : "blur(6px)",
           }}
         >
-          {/* Mentis — справа внизу, лёгкое парение (за логотипом по слою) */}
-          <img
-            src="/brand/mentis.webp"
-            alt=""
-            aria-hidden
-            className="launch-float pointer-events-none absolute bottom-0 right-1 z-0 h-[52%] max-h-[440px] w-auto object-contain"
-          />
-
-          {/* Центр: крупный логотип LUNARGENT + важные предупреждения */}
-          <div className="relative z-10 flex h-full flex-col items-center justify-center px-10 pb-[14%] text-center">
-            {selfUpd && !updatingSelf && (
-              <button
-                onClick={runSelfUpdate}
-                className="group mb-5 inline-flex items-center gap-2.5 rounded-full border border-[rgba(201,164,92,0.4)] bg-[rgba(201,164,92,0.08)] px-5 py-2 text-sm text-[#e9e4d8] transition hover:bg-[rgba(201,164,92,0.16)]"
-              >
-                <Download className="size-4 text-[#c9a45c] transition group-hover:translate-y-0.5" />
-                Доступно обновление лаунчера{" "}
-                <span className="font-mono text-[#c9a45c]">{selfUpd.version}</span>
-                <span className="ml-1 rounded-md bg-[rgba(201,164,92,0.18)] px-2 py-0.5 text-[0.7rem] tracking-wide text-[#c9a45c] uppercase">
-                  Обновить
-                </span>
-              </button>
-            )}
-
-            {/* Главный логотип LUNARGENT (как на сайте) — крупный, статичный */}
+          {/* Mentis — справа внизу, лёгкое парение; клик открывает чат-ассистента */}
+          <button
+            type="button"
+            onClick={() => setShowMentis((v) => !v)}
+            aria-label="Открыть ассистента Mentis"
+            className="group/mentis launch-float absolute bottom-0 right-1 z-0 h-[52%] max-h-[440px] w-auto cursor-pointer focus:outline-none"
+          >
             <img
-              src="/brand/logo-hero.webp"
-              alt="LUNARGENT"
-              className="pointer-events-none h-auto max-h-[62%] w-full max-w-[28rem] object-contain"
+              src="/brand/mentis.webp"
+              alt=""
+              aria-hidden
+              className="h-full w-auto object-contain transition-[filter,transform] duration-300 group-hover/mentis:scale-[1.03] group-hover/mentis:brightness-110"
             />
-          </div>
+          </button>
+
+          {/* Плашка «доступно обновление лаунчера» — сверху по центру */}
+          {selfUpd && !updatingSelf && (
+            <button
+              onClick={runSelfUpdate}
+              className="group absolute left-1/2 top-6 z-20 inline-flex -translate-x-1/2 items-center gap-2.5 rounded-full border border-[rgba(201,164,92,0.4)] bg-[rgba(201,164,92,0.08)] px-5 py-2 text-sm text-[#e9e4d8] backdrop-blur-md transition hover:bg-[rgba(201,164,92,0.16)]"
+            >
+              <Download className="size-4 text-[#c9a45c] transition group-hover:translate-y-0.5" />
+              Доступно обновление лаунчера{" "}
+              <span className="font-mono text-[#c9a45c]">{selfUpd.version}</span>
+              <span className="ml-1 rounded-md bg-[rgba(201,164,92,0.18)] px-2 py-0.5 text-[0.7rem] tracking-wide text-[#c9a45c] uppercase">
+                Обновить
+              </span>
+            </button>
+          )}
+
+          {/* Главный логотип LUNARGENT — крупный (~54% высоты), смещён вниз (~2/3) */}
+          <img
+            src="/brand/logo-hero.webp"
+            alt="LUNARGENT"
+            className="pointer-events-none absolute left-1/2 top-[58%] z-10 h-auto max-h-[54%] w-auto max-w-[48%] -translate-x-1/2 -translate-y-1/2 object-contain"
+          />
 
           {/* Карточки серверов — слева внизу */}
           <div className="absolute bottom-5 left-6 z-20 w-[min(20rem,42%)]">
@@ -691,7 +697,11 @@ export default function App() {
 
       {showBug && <BugReport onClose={() => setShowBug(false)} />}
 
-      <Hints enabled={!!me && !running && !showSettings && !showGameAcc && !showBug} />
+      <MentisAssistant
+        open={showMentis}
+        onClose={() => setShowMentis(false)}
+        enabled={introDone && !running && !showSettings && !showGameAcc && !showBug}
+      />
     </div>
   );
 }

@@ -119,6 +119,8 @@ export const api = {
   getConfig: () => invoke<LauncherConfig>("get_config"),
   saveConfig: (config: LauncherConfig) => invoke<void>("save_config", { config }),
   serverStatus: () => invoke<ServerInfo[]>("server_status"),
+  assistantChat: (messages: { role: "user" | "assistant"; content: string }[]) =>
+    invoke<string>("assistant_chat", { messages }),
   checkUpdate: () => invoke<CheckResult>("check_update"),
   startUpdate: () => invoke<void>("start_update"),
   repair: () => invoke<ScanSummary>("repair"),
