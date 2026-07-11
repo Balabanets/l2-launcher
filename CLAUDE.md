@@ -119,7 +119,13 @@ master-client/           ЭТАЛОННАЯ копия клиента (~7 ГБ, 
   `no_check_bucket = true`). Рабочие R2-креды сайта — в `l2site/.env` (`R2_ACCESS_KEY_ID` и т.д.,
   бакет тикетов `l2-tickets`).
 - **CF API-токен** (привязка `l2files`→R2, DNS): `~/.config/l2-launcher/keys/cf_api_token` (600),
-  права Zone DNS:Edit + Workers R2 Storage:Edit.
+  права Zone DNS:Edit + Workers R2 Storage:Edit. Токен «claude» (user-owned, полные права R2/DNS).
+- **Роллить токены не нужно** — это тестовая среда (подтверждено владельцем 2026-07-11). Ключи R2/CF
+  фигурировали в переписке, но ротация не требуется.
+- **Тикеты (l2site) → бакет `l2-tickets`**, не путать с `master-client`. Конфиг R2 сайта в
+  `l2site/.env`: `R2_BUCKET=l2-tickets`, `R2_ENDPOINT=https://0f5793a6…r2.cloudflarestorage.com`
+  (2026-07-11 исправлен баг: было `Tickets` + пустой endpoint-плейсхолдер → загрузка вложений не
+  работала). Код: `l2site/src/lib/r2.ts` (presigned PUT/GET, region `auto`).
 
 **Модель защиты:**
 - **Слой 1 (клиент):** подписанный манифест (подмена невозможна) + обязательная проверка
