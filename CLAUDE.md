@@ -127,6 +127,16 @@ master-client/           ЭТАЛОННАЯ копия клиента (~7 ГБ, 
   (2026-07-11 исправлен баг: было `Tickets` + пустой endpoint-плейсхолдер → загрузка вложений не
   работала). Код: `l2site/src/lib/r2.ts` (presigned PUT/GET, region `auto`).
 
+### Kill-switch старых версий лаунчера (мин. версия)
+Лаунчер шлёт `User-Agent: L2Launcher/<версия>`. Бэкенд Слоя 2 гейтит `authorize` по
+`MIN_LAUNCHER_VERSION` (`l2site/.env`): версии ниже (и без `L2Launcher`-UA) → **426**, IP не
+авторизуется, aCis не пускает → старые версии «мертвы». Сейчас `MIN_LAUNCHER_VERSION=0.6.9`.
+Чтобы сделать новый релиз обязательным: поднять порог + `docker compose up -d --force-recreate l2site`
+(env-file перечитывается только при пересоздании контейнера, не при `restart`). Самообновление
+общее (`launcher.json`/updater-ключ) — не killable выборочно; заблокированные старые
+самообновляются до текущей за ≤2 мин (self-healing). Код: `launcher-auth.ts:launcherVersionAllowed`,
+`api/launcher/authorize/route.ts`.
+
 **Модель защиты:**
 - **Слой 1 (клиент):** подписанный манифест (подмена невозможна) + обязательная проверка
   критичных файлов перед запуском (`verify.rs`); игру запускает только лаунчер; анти-traversal.
