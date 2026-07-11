@@ -7,7 +7,7 @@ export function TitleBar() {
     <div className="drag flex h-11 items-center justify-between px-4 border-b border-[rgba(201,164,92,0.12)]">
       {/* Бренд как в шапке сайта: единый локап (кристалл + LUNARGENT), без растяжения */}
       <div className="flex items-center">
-        <img src="/brand/logo-lockup.webp" alt="LUNARGENT" className="h-8 w-auto object-contain" />
+        <img src="/brand/logo-lockup.webp" alt="LUNARGENT" className="h-[2.3rem] w-auto object-contain" />
       </div>
       <div className="no-drag flex items-center gap-1">
         <button

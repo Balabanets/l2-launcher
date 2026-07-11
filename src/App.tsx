@@ -464,11 +464,12 @@ export default function App() {
             </button>
           )}
 
-          {/* Главный логотип LUNARGENT — крупный (~54% высоты), смещён вниз (~2/3) */}
+          {/* Главный логотип LUNARGENT — фиксированные 30% высоты, строго по центру
+              по горизонтали, вертикальный якорь ~2/3. */}
           <img
             src="/brand/logo-hero.webp"
             alt="LUNARGENT"
-            className="pointer-events-none absolute left-1/2 top-[58%] z-10 h-auto max-h-[54%] w-auto max-w-[48%] -translate-x-1/2 -translate-y-1/2 object-contain"
+            className="pointer-events-none absolute left-1/2 top-[58%] z-10 h-[30%] w-auto -translate-x-1/2 -translate-y-1/2 object-contain"
           />
 
           {/* Карточки серверов — слева внизу */}
