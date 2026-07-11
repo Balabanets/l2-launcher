@@ -43,3 +43,5 @@ keys/
 # Исходные архивы клиента (не исходник лаунчера)
 /L2_Client_Release.zip
 /client-staging/
+*.7z
+*.zip
