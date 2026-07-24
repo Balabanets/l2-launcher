@@ -157,6 +157,12 @@ async fn cached_or_load(state: &AppState) -> Result<Manifest, String> {
     load_manifest(state).await
 }
 
+fn applied_manifest_path(state: &AppState) -> PathBuf {
+    state
+        .config_path
+        .with_file_name("applied-client-manifest.json")
+}
+
 // ---- управление задачами ----
 
 #[tauri::command]
@@ -205,12 +211,24 @@ async fn server_status(state: State<'_, AppState>) -> Result<Vec<ServerInfoOut>,
         return Err(format!("status HTTP {}", resp.status()));
     }
     let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    let servers = v.get("servers").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+    let servers = v
+        .get("servers")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
     Ok(servers
         .iter()
         .map(|s| ServerInfoOut {
-            id: s.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-            name: s.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            id: s
+                .get("id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            name: s
+                .get("name")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
             online: s.get("online").and_then(|x| x.as_bool()).unwrap_or(false),
             players: s.get("players").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
             max: s.get("max").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
@@ -272,8 +290,13 @@ async fn check_update(state: State<'_, AppState>) -> Result<CheckResult, String>
         let refs = sync::sync_refs(&m, &install, &lang);
         let diff = scan::scan(&install, &refs, ScanMode::Quick);
         let seed = sync::missing_seed(&m, &install);
-        let seed_bytes: u64 = seed.iter().map(|f| f.size).sum();
-        (diff.missing.len(), diff.mismatched.len(), diff.bytes_to_download + seed_bytes, seed.len())
+        let seed_bytes: u64 = seed.iter().map(|f| f.download_size()).sum();
+        (
+            diff.missing.len(),
+            diff.mismatched.len(),
+            diff.bytes_to_download + seed_bytes,
+            seed.len(),
+        )
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -314,7 +337,7 @@ async fn ensure_defender_exclusion_once(state: &State<'_, AppState>) {
 #[tauri::command]
 async fn start_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     state.control.reset();
-    let manifest = cached_or_load(&state).await?;
+    let manifest = load_manifest(&state).await?;
     // До скачивания: добавить папку в исключения Defender (один раз), иначе свежий
     // L2.exe может попасть в карантин прямо во время загрузки → цикл «недостающий файл».
     ensure_defender_exclusion_once(&state).await;
@@ -333,7 +356,7 @@ async fn start_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Resu
     .map_err(|e| e.to_string())?;
 
     if !to_fetch.is_empty() {
-        download::download_all(
+        let outcome = download::download_all(
             &state.client,
             &cfg.install_dir,
             bases_of(&manifest),
@@ -345,19 +368,34 @@ async fn start_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Resu
         )
         .await
         .map_err(|e| e.to_string())?;
+        if outcome == download::Outcome::Cancelled {
+            return Ok(());
+        }
     }
     // Удалить устаревшие файлы (GameGuard и т.п.) согласно манифесту.
     let install_del = install.clone();
     let m_del = manifest.clone();
-    tokio::task::spawn_blocking(move || sync::apply_deletions(&install_del, &m_del))
-        .await
-        .map_err(|e| e.to_string())?;
+    let applied_state = applied_manifest_path(&state);
+    tokio::task::spawn_blocking(move || {
+        sync::apply_version_transition(&install_del, &m_del, &applied_state);
+        sync::apply_deletions(&install_del, &m_del);
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     // Применить выбор игрока (perf/язык) + засеять WindowsInfo — тихо, best-effort.
     let install_re = install.clone();
     let (perf, lang2) = (cfg.performance, cfg.language.clone());
     tokio::task::spawn_blocking(move || client_settings::apply(&install_re, perf, &lang2))
         .await
         .map_err(|e| e.to_string())?;
+    let applied_state = applied_manifest_path(&state);
+    let applied_manifest = manifest.clone();
+    tokio::task::spawn_blocking(move || {
+        sync::save_applied_manifest(&applied_manifest, &applied_state)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -365,7 +403,7 @@ async fn start_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Resu
 #[tauri::command]
 async fn repair(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<ScanSummary, String> {
     state.control.reset();
-    let manifest = cached_or_load(&state).await?;
+    let manifest = load_manifest(&state).await?;
     // Если Defender уже отправил L2.exe в карантин — добавляем исключение до починки,
     // чтобы докачанный файл не удалили снова.
     ensure_defender_exclusion_once(&state).await;
@@ -379,25 +417,27 @@ async fn repair(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Sca
     let lang = cfg.language.clone();
     let (diff, cancelled, seed) = tokio::task::spawn_blocking(move || {
         let refs = sync::sync_refs(&m, &install_scan, &lang);
-        let (diff, cancelled) = scan::scan_with_progress(&install_scan, &refs, ScanMode::Hash, control, cb);
+        let (diff, cancelled) =
+            scan::scan_with_progress(&install_scan, &refs, ScanMode::Hash, control, cb);
         let seed = sync::missing_seed(&m, &install_scan);
         (diff, cancelled, seed)
     })
     .await
     .map_err(|e| e.to_string())?;
 
+    let seed_bytes: u64 = seed.iter().map(|entry| entry.download_size()).sum();
     let summary = ScanSummary {
         ok: diff.ok,
         missing: diff.missing.len() + seed.len(),
         mismatched: diff.mismatched.len(),
-        bytes_to_download: diff.bytes_to_download,
+        bytes_to_download: diff.bytes_to_download + seed_bytes,
         checked: diff.checked,
         cancelled,
     };
     let mut to_fetch = diff.to_fetch();
     to_fetch.extend(seed);
     if !cancelled && !to_fetch.is_empty() {
-        download::download_all(
+        let outcome = download::download_all(
             &state.client,
             &cfg.install_dir,
             bases_of(&manifest),
@@ -409,27 +449,49 @@ async fn repair(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Sca
         )
         .await
         .map_err(|e| e.to_string())?;
+        if outcome == download::Outcome::Cancelled {
+            return Ok(ScanSummary {
+                cancelled: true,
+                ..summary
+            });
+        }
     }
     if !cancelled {
         let install_del = install.clone();
         let m_del = manifest.clone();
-        tokio::task::spawn_blocking(move || sync::apply_deletions(&install_del, &m_del))
-            .await
-            .map_err(|e| e.to_string())?;
+        let applied_state = applied_manifest_path(&state);
+        tokio::task::spawn_blocking(move || {
+            sync::apply_version_transition(&install_del, &m_del, &applied_state);
+            sync::apply_deletions(&install_del, &m_del);
+        })
+        .await
+        .map_err(|e| e.to_string())?;
         let install_re = install.clone();
         let (perf, lang2) = (cfg.performance, cfg.language.clone());
         tokio::task::spawn_blocking(move || client_settings::apply(&install_re, perf, &lang2))
             .await
             .map_err(|e| e.to_string())?;
+        let applied_state = applied_manifest_path(&state);
+        let applied_manifest = manifest.clone();
+        tokio::task::spawn_blocking(move || {
+            sync::save_applied_manifest(&applied_manifest, &applied_state)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
     }
     Ok(summary)
 }
 
 /// Полная проверка целостности без скачивания.
 #[tauri::command]
-async fn verify_files(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<ScanSummary, String> {
+async fn verify_files(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ScanSummary, String> {
     state.control.reset();
-    let manifest = cached_or_load(&state).await?;
+    let manifest = load_manifest(&state).await?;
+
     let cfg = state.config.lock().await.clone();
     let install = cfg.install_dir.clone();
     let m = manifest.clone();
@@ -498,12 +560,45 @@ async fn play(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PlayR
     match auth::list_game_accounts(&state.client, &cfg.api_base, &token).await {
         Ok(accs) if !accs.is_empty() => {}
         Ok(_) => {
-            return Err("Создайте игровой аккаунт, чтобы играть (кнопка «Игровой аккаунт»).".to_string());
+            return Err(
+                "Создайте игровой аккаунт, чтобы играть (кнопка «Игровой аккаунт»).".to_string(),
+            );
         }
         Err(e) => return Err(format!("Не удалось проверить игровой аккаунт: {e}")),
     }
 
-    let manifest = cached_or_load(&state).await?;
+    let manifest = load_manifest(&state).await?;
+
+    // Нельзя запускать только по критическим файлам: после публикации/отката
+    // manifest может требовать обычные assets. Быстрый preflight отправляет
+    // игрока в штатный flow «Восстановить» до запуска игры.
+    let install_sync = cfg.install_dir.clone();
+    let manifest_sync = manifest.clone();
+    let lang_sync = cfg.language.clone();
+    let pending = tokio::task::spawn_blocking(move || {
+        let refs = sync::sync_refs(&manifest_sync, &install_sync, &lang_sync);
+        let diff = scan::scan(&install_sync, &refs, ScanMode::Quick);
+        let mut paths: Vec<String> = diff
+            .missing
+            .iter()
+            .chain(diff.mismatched.iter())
+            .map(|entry| entry.path.clone())
+            .collect();
+        paths.extend(
+            sync::missing_seed(&manifest_sync, &install_sync)
+                .into_iter()
+                .map(|entry| entry.path),
+        );
+        paths
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    if !pending.is_empty() {
+        return Ok(PlayResult {
+            launched: false,
+            bad: pending,
+        });
+    }
 
     // Анти-мультибокс: не запускать больше лимита окон. Лимит — с бэкенда (админ),
     // fallback — из конфига. Подсчёт запущенных l2.exe без окна.
@@ -528,8 +623,28 @@ async fn play(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PlayR
     .await
     .map_err(|e| e.to_string())?;
     if !report.ok {
-        return Ok(PlayResult { launched: false, bad: report.bad });
+        return Ok(PlayResult {
+            launched: false,
+            bad: report.bad,
+        });
     }
+    let install_transition = cfg.install_dir.clone();
+    let manifest_transition = manifest.clone();
+    let applied_state = applied_manifest_path(&state);
+    tokio::task::spawn_blocking(move || {
+        sync::apply_version_transition(&install_transition, &manifest_transition, &applied_state);
+        sync::apply_deletions(&install_transition, &manifest_transition);
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let applied_state = applied_manifest_path(&state);
+    let applied_manifest = manifest.clone();
+    tokio::task::spawn_blocking(move || {
+        sync::save_applied_manifest(&applied_manifest, &applied_state)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
 
     // Слой 2: авторизуем IP на бэкенде (сервер aCis проверит это при входе в мир).
     let _authorized = session::authorize(
@@ -542,7 +657,10 @@ async fn play(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PlayR
     .await;
 
     // Heartbeat: пока лаунчер открыт, продлеваем авторизацию IP (и ловим подмену в рантайме).
-    if !state.heartbeat.swap(true, std::sync::atomic::Ordering::SeqCst) {
+    if !state
+        .heartbeat
+        .swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
         start_heartbeat(
             state.client.clone(),
             cfg.api_base.clone(),
@@ -567,7 +685,10 @@ async fn play(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PlayR
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
 
-    Ok(PlayResult { launched: true, bad: vec![] })
+    Ok(PlayResult {
+        launched: true,
+        bad: vec![],
+    })
 }
 
 /// Состояние Smart App Control: "off" | "on" | "evaluation" | "unknown".
@@ -646,7 +767,10 @@ async fn check_self_update(
 
 /// Скачать, проверить (SHA-256 + подпись) и заменить exe на месте, затем перезапуститься.
 #[tauri::command]
-async fn apply_self_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+async fn apply_self_update(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let rel = selfupdate::check(&state.client)
         .await
         .map_err(|e| e.to_string())?
@@ -706,8 +830,11 @@ async fn set_client_language(
     if lang == "en" && !sync::en_downloaded(&install) {
         state.control.reset();
         if let Ok(manifest) = cached_or_load(&state).await {
-            let files: Vec<FileEntry> =
-                manifest.lang_group_files("lang-en").into_iter().cloned().collect();
+            let files: Vec<FileEntry> = manifest
+                .lang_group_files("lang-en")
+                .into_iter()
+                .cloned()
+                .collect();
             if !files.is_empty() {
                 let _ = download::download_all(
                     &state.client,
@@ -778,7 +905,12 @@ async fn auth_me(state: State<'_, AppState>) -> Result<Option<auth::Me>, String>
 #[tauri::command]
 async fn list_game_accounts(state: State<'_, AppState>) -> Result<Vec<auth::GameAccount>, String> {
     let api_base = state.config.lock().await.api_base.clone();
-    let token = state.session.lock().await.clone().ok_or("Сначала войдите в лаунчер")?;
+    let token = state
+        .session
+        .lock()
+        .await
+        .clone()
+        .ok_or("Сначала войдите в лаунчер")?;
     auth::list_game_accounts(&state.client, &api_base, &token).await
 }
 
@@ -790,7 +922,12 @@ async fn create_game_account(
     password: String,
 ) -> Result<String, String> {
     let api_base = state.config.lock().await.api_base.clone();
-    let token = state.session.lock().await.clone().ok_or("Сначала войдите в лаунчер")?;
+    let token = state
+        .session
+        .lock()
+        .await
+        .clone()
+        .ok_or("Сначала войдите в лаунчер")?;
     auth::create_game_account(&state.client, &api_base, &token, &login, &password).await
 }
 
@@ -802,7 +939,12 @@ async fn claim_game_account(
     password: String,
 ) -> Result<String, String> {
     let api_base = state.config.lock().await.api_base.clone();
-    let token = state.session.lock().await.clone().ok_or("Сначала войдите в лаунчер")?;
+    let token = state
+        .session
+        .lock()
+        .await
+        .clone()
+        .ok_or("Сначала войдите в лаунчер")?;
     auth::claim_game_account(&state.client, &api_base, &token, &login, &password).await
 }
 
@@ -814,7 +956,12 @@ async fn change_game_account_password(
     password: String,
 ) -> Result<(), String> {
     let api_base = state.config.lock().await.api_base.clone();
-    let token = state.session.lock().await.clone().ok_or("Сначала войдите в лаунчер")?;
+    let token = state
+        .session
+        .lock()
+        .await
+        .clone()
+        .ok_or("Сначала войдите в лаунчер")?;
     auth::change_game_account_password(&state.client, &api_base, &token, &login, &password).await
 }
 
@@ -829,7 +976,12 @@ async fn submit_bug_report(
     files: Vec<String>,
 ) -> Result<auth::ReportResult, String> {
     let api_base = state.config.lock().await.api_base.clone();
-    let token = state.session.lock().await.clone().ok_or("Сначала войдите в лаунчер")?;
+    let token = state
+        .session
+        .lock()
+        .await
+        .clone()
+        .ok_or("Сначала войдите в лаунчер")?;
     let version = selfupdate::current_version();
     auth::submit_report(
         &state.client,

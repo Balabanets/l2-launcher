@@ -39,7 +39,11 @@ impl Diff {
         !self.missing.is_empty() || !self.mismatched.is_empty()
     }
     pub fn to_fetch(&self) -> Vec<FileEntry> {
-        self.missing.iter().chain(self.mismatched.iter()).cloned().collect()
+        self.missing
+            .iter()
+            .chain(self.mismatched.iter())
+            .cloned()
+            .collect()
     }
 }
 
@@ -85,11 +89,11 @@ fn collect(results: Vec<(Status, &FileEntry)>) -> Diff {
             Status::Ok => diff.ok += 1,
             Status::Skipped => diff.checked -= 1, // не считаем пропущенные при отмене
             Status::Missing => {
-                diff.bytes_to_download += entry.size;
+                diff.bytes_to_download += entry.download_size();
                 diff.missing.push(entry.clone());
             }
             Status::Mismatch => {
-                diff.bytes_to_download += entry.size;
+                diff.bytes_to_download += entry.download_size();
                 diff.mismatched.push(entry.clone());
             }
         }
@@ -99,8 +103,10 @@ fn collect(results: Vec<(Status, &FileEntry)>) -> Diff {
 
 /// Быстрый скан без прогресса/паузы (для проверки обновлений).
 pub fn scan(install: &Path, entries: &[&FileEntry], mode: ScanMode) -> Diff {
-    let results: Vec<(Status, &FileEntry)> =
-        entries.par_iter().map(|e| (check_one(install, e, mode), *e)).collect();
+    let results: Vec<(Status, &FileEntry)> = entries
+        .par_iter()
+        .map(|e| (check_one(install, e, mode), *e))
+        .collect();
     collect(results)
 }
 
@@ -171,7 +177,11 @@ mod tests {
 
     fn unique_tmp(tag: &str) -> PathBuf {
         let mut p = std::env::temp_dir();
-        p.push(format!("l2scan_{}_{}", tag, SEQ.fetch_add(1, Ordering::SeqCst)));
+        p.push(format!(
+            "l2scan_{}_{}",
+            tag,
+            SEQ.fetch_add(1, Ordering::SeqCst)
+        ));
         let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
         p
@@ -192,6 +202,20 @@ mod tests {
         fs::write(p, bytes).unwrap();
     }
 
+    #[test]
+    fn reports_compressed_download_size() {
+        let entry = FileEntry {
+            path: "data/a.bin".into(),
+            size: 10_000,
+            sha256: "0".repeat(64),
+            comp: Some("zstd".into()),
+            csize: Some(1_234),
+            ..Default::default()
+        };
+        let diff = collect(vec![(Status::Missing, &entry)]);
+        assert_eq!(diff.bytes_to_download, 1_234);
+    }
+
     /// Мелкий файл с тем же размером, но другим содержимым в Quick-режиме
     /// должен распознаваться как изменённый (а не считаться целым по размеру).
     #[test]
@@ -202,7 +226,11 @@ mod tests {
         write(&dir, "system/l2.ini", b"bbbb");
 
         let diff = scan(&dir, &[&e], ScanMode::Quick);
-        assert_eq!(diff.mismatched.len(), 1, "подмена мелкого файла должна ловиться в Quick");
+        assert_eq!(
+            diff.mismatched.len(),
+            1,
+            "подмена мелкого файла должна ловиться в Quick"
+        );
         assert_eq!(diff.ok, 0);
         let _ = fs::remove_dir_all(&dir);
     }
