@@ -12,6 +12,10 @@ path = "src/main.rs"
 name = "keygen"
 path = "src/bin/keygen.rs"
 
+[[bin]]
+name = "manifest-verify"
+path = "src/bin/verify.rs"
+
 [dependencies]
 l2-manifest = { path = "../../crates/manifest" }
 serde = { workspace = true }
